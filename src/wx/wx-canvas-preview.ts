@@ -3,17 +3,21 @@ import { drawPreviewPaths2d } from '@/canvas-home/preview-path-draw'
 import { getPlatform, isWxMiniGame } from '@/platform'
 import { wxHomePreviewFrame } from '@/wx/wx-home-anim'
 import {
-  bakeCanvasToCanvasSprite,
+  bakeCanvasToImageSprite,
   destroyWxCanvasBakeState,
   invalidateWxCanvasBake,
+  withWxCanvasBakeLock,
   type WxCanvasBakeState,
 } from './wx-canvas-bake'
-import { getWxPreviewOffscreenCanvas } from './canvas'
+import { getWxCanvas2dContext, getWxSharedOffscreenCanvas } from './canvas'
 
-/** 微信预览路径 — 共享离屏 Canvas 2D 逐帧烘焙（Pixi 无 dash 动画） */
+/** 微信预览路径 — 共享离屏 Canvas 2D + Image 烘焙 */
 export class WxCanvasPreview extends Sprite {
   private readonly bakeState: WxCanvasBakeState = {}
   private lastPreviewKey = ''
+  private baking: Promise<void> | null = null
+  private pending: { t: number; x: number; y: number; w: number; h: number } | null = null
+  onTextureReady: (() => void) | null = null
 
   constructor() {
     super(Texture.EMPTY)
@@ -31,27 +35,49 @@ export class WxCanvasPreview extends Sprite {
     this.visible = true
     this.x = x
     this.y = y
+    this.pending = { t, x, y, w, h }
+    void this.ensureBaked()
+  }
 
-    const dpr = isWxMiniGame() ? Math.min(getPlatform().getDevicePixelRatio(), 3) : Math.min(getPlatform().getDevicePixelRatio(), 2)
-    const pixelW = Math.max(1, Math.ceil(w * dpr))
-    const pixelH = Math.max(1, Math.ceil(h * dpr))
+  private ensureBaked(): Promise<void> {
+    if (this.baking) return this.baking
+    this.baking = this.doBake().finally(() => {
+      this.baking = null
+      if (this.pending) void this.ensureBaked()
+    })
+    return this.baking
+  }
 
-    const canvas = getWxPreviewOffscreenCanvas()
-    if (canvas.width !== pixelW || canvas.height !== pixelH) {
-      canvas.width = pixelW
-      canvas.height = pixelH
-    }
+  private async doBake(): Promise<void> {
+    const p = this.pending
+    if (!p) return
+    this.pending = null
 
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    await withWxCanvasBakeLock(async () => {
+      const dpr = isWxMiniGame()
+        ? Math.min(getPlatform().getDevicePixelRatio(), 3)
+        : Math.min(getPlatform().getDevicePixelRatio(), 2)
+      const pixelW = Math.max(1, Math.ceil(p.w * dpr))
+      const pixelH = Math.max(1, Math.ceil(p.h * dpr))
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, w, h)
-    drawPreviewPaths2d(ctx, 0, 0, w, h, t)
+      const canvas = getWxSharedOffscreenCanvas()
+      if (canvas.width !== pixelW || canvas.height !== pixelH) {
+        canvas.width = pixelW
+        canvas.height = pixelH
+      }
 
-    bakeCanvasToCanvasSprite(this, this.bakeState, canvas)
-    this.width = w
-    this.height = h
+      const ctx = getWxCanvas2dContext(canvas)
+      if (!ctx) return
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, p.w, p.h)
+      drawPreviewPaths2d(ctx, 0, 0, p.w, p.h, p.t)
+
+      await bakeCanvasToImageSprite(this, this.bakeState, canvas, dpr, p.w, p.h)
+      this.width = p.w
+      this.height = p.h
+      this.onTextureReady?.()
+    })
   }
 
   invalidateBakedTexture(): void {

@@ -1,5 +1,16 @@
 /** 微信环境全局补丁 — 不可 import pixi，须最先加载 */
-import { createWxOffscreenCanvas, setWxMainCanvas } from './canvas'
+import './wx-safe-get-context'
+import {
+  createWxOffscreenCanvas,
+  ensureWxCanvasGetContext,
+  getWxCanvas2dContext,
+  getWxSharedOffscreenCanvas,
+  assertWxCanvasStackReady,
+  installWxCanvasPrototypeGetContext,
+  isWxIosPlatform,
+  setWxMainCanvas,
+} from './canvas'
+import { installWxDOMAdapter } from './wx-dom-adapter'
 
 /** Pixi CanvasTextMetrics 会读 Intl?.Segmenter；微信无 Intl 全局时会 ReferenceError */
 function installIntlPolyfill(): void {
@@ -72,7 +83,14 @@ function ensureGlobalConstructors(canvas: WechatMinigame.Canvas): void {
   }
 
   if (!g.CanvasRenderingContext2D) {
-    const ctx = canvas.getContext('2d')
+    let ctx = getWxCanvas2dContext(canvas)
+    if (!ctx) {
+      try {
+        ctx = getWxCanvas2dContext(getWxSharedOffscreenCanvas())
+      } catch {
+        /* 离屏 2d 尚未就绪 */
+      }
+    }
     const ctor = contextConstructor<typeof CanvasRenderingContext2D>(ctx)
     if (ctor) g.CanvasRenderingContext2D = ctor
   }
@@ -93,16 +111,59 @@ function ensureGlobalConstructors(canvas: WechatMinigame.Canvas): void {
 
 function noopListener(): void {}
 
+function createWxCanvasElement(): WechatMinigame.Canvas {
+  return ensureWxCanvasGetContext(createWxOffscreenCanvas()) as WechatMinigame.Canvas
+}
+
+function createWxCreateElement(
+  _fontFaceSet: { load: () => Promise<void>; check: () => boolean; ready: Promise<void> },
+  native?: (tag: string) => unknown,
+): (tag: string) => unknown {
+  return (tag: string): unknown => {
+    if (tag === 'div' || tag === 'button' || tag === 'a') return createWxMockDomElement(tag)
+    if (tag === 'canvas') return createWxCanvasElement()
+    if (tag === 'img') return wx.createImage()
+    if (native) {
+      try {
+        const el = native(tag) as Record<string, unknown>
+        ensureDomElement(el)
+        if ((tag === 'div' || tag === 'button') && typeof el.addEventListener !== 'function') {
+          return createWxMockDomElement(tag)
+        }
+        return el
+      } catch {
+        return createWxMockDomElement(tag)
+      }
+    }
+    return createWxMockDomElement(tag)
+  }
+}
+
+function canvasCreateElementWorks(): boolean {
+  try {
+    const doc = globalThis.document as { createElement?: (tag: string) => unknown } | undefined
+    if (!doc || typeof doc.createElement !== 'function') return false
+    const canvas = doc.createElement('canvas') as {
+      getContext?: (type: string) => CanvasRenderingContext2D | null
+    }
+    if (typeof canvas.getContext !== 'function') return false
+    return !!canvas.getContext('2d')
+  } catch {
+    return false
+  }
+}
+
+function shouldUseWxDocumentCreateElement(): boolean {
+  if (typeof wx !== 'undefined') return true
+  return isWxIosPlatform() || !canvasCreateElementWorks()
+}
+
 function createWxDocument(
   fontFaceSet: { load: () => Promise<void>; check: () => boolean; ready: Promise<void> },
 ): Record<string, unknown> {
   const body = createWxDocumentBody()
   return {
-    createElement: (tag: string) => {
-      if (tag === 'canvas') return createWxOffscreenCanvas()
-      if (tag === 'img') return wx.createImage()
-      return createWxMockDomElement(tag)
-    },
+    createElement: createWxCreateElement(fontFaceSet),
     baseURI: '',
     fonts: fontFaceSet,
     body,
@@ -152,6 +213,25 @@ function installWxDocumentPolyfills(
   if (g.document) {
     const doc = g.document as Record<string, unknown>
     const body = (doc.body as Record<string, unknown> | undefined) ?? createWxDocumentBody()
+    const nativeCreate = doc.createElement as ((tag: string) => unknown) | undefined
+    const patched = createWxCreateElement(
+      fontFaceSet,
+      typeof nativeCreate === 'function' ? nativeCreate.bind(doc) : undefined,
+    )
+    try {
+      doc.createElement = patched
+    } catch {
+      defineIfMissing(doc, 'createElement', patched)
+    }
+    if (shouldUseWxDocumentCreateElement()) {
+      const mock = createWxDocument(fontFaceSet)
+      mock.body = body
+      try {
+        ;(g as typeof globalThis & { document?: unknown }).document = mock
+      } catch {
+        /* 只读 document，依赖 installDocumentCreateElementPatch */
+      }
+    }
     return { body }
   }
 
@@ -218,31 +298,30 @@ function ensureDomElement(el: Record<string, unknown>): void {
 }
 
 /** 微信 canvas / 原生 div 可能无 addEventListener — 包装 createElement */
-function installDocumentCreateElementPatch(): void {
+function installDocumentCreateElementPatch(
+  fontFaceSet: { load: () => Promise<void>; check: () => boolean; ready: Promise<void> },
+): void {
   const doc = globalThis.document as { createElement?: (tag: string) => unknown } | undefined
   if (!doc || typeof doc.createElement !== 'function') return
 
   const native = doc.createElement.bind(doc)
-  const patched = (tag: string): unknown => {
-    if (tag === 'div' || tag === 'button' || tag === 'a') return createWxMockDomElement(tag)
-    if (tag === 'canvas') return createWxOffscreenCanvas()
-    if (tag === 'img') return wx.createImage()
-    try {
-      const el = native(tag) as Record<string, unknown>
-      ensureDomElement(el)
-      if ((tag === 'div' || tag === 'button') && typeof el.addEventListener !== 'function') {
-        return createWxMockDomElement(tag)
-      }
-      return el
-    } catch {
-      return createWxMockDomElement(tag)
-    }
-  }
+  const patched = createWxCreateElement(fontFaceSet, native)
 
   try {
     doc.createElement = patched
   } catch {
     defineIfMissing(doc, 'createElement', patched)
+  }
+
+  if (shouldUseWxDocumentCreateElement()) {
+    const body = (doc.body as Record<string, unknown> | undefined) ?? createWxDocumentBody()
+    const mock = createWxDocument(fontFaceSet)
+    mock.body = body
+    try {
+      ;(globalThis as typeof globalThis & { document?: unknown }).document = mock
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -356,6 +435,86 @@ function installTimingPolyfills(canvas: WechatMinigame.Canvas): void {
   }
 }
 
+/**
+ * iOS 微信里原生 OffscreenCanvas 可能存在但实例无 getContext，
+ * Pixi CanvasTextMetrics 会直接调用导致启动崩溃。
+ */
+function installOffscreenCanvasPolyfill(): void {
+  const g = globalThis as typeof globalThis & {
+    OffscreenCanvas?: new (w: number, h: number) => {
+      width: number
+      height: number
+      getContext?: (type: string, opts?: unknown) => unknown
+    }
+  }
+
+  function nativeOffscreenWorks(): boolean {
+    if (typeof g.OffscreenCanvas !== 'function') return false
+    try {
+      const probe = new g.OffscreenCanvas(1, 1)
+      return typeof probe.getContext === 'function' && !!probe.getContext('2d')
+    } catch {
+      return false
+    }
+  }
+
+  if (typeof wx !== 'undefined') {
+    /* 微信真机（含 iOS）上原生 OffscreenCanvas 可能无 getContext，一律替换 */
+  } else if (nativeOffscreenWorks()) {
+    return
+  }
+
+  type WxOffscreenInstance = { width: number; height: number }
+
+  const WxOffscreenCanvas = function WxOffscreenCanvas(
+    this: WxOffscreenInstance,
+    w: number,
+    h: number,
+  ): WxOffscreenInstance {
+    if (!(this instanceof WxOffscreenCanvas)) {
+      return new (WxOffscreenCanvas as unknown as new (w: number, h: number) => WxOffscreenInstance)(
+        w,
+        h,
+      )
+    }
+    this.width = w
+    this.height = h
+    return this
+  } as unknown as new (w: number, h: number) => WxOffscreenInstance
+
+  WxOffscreenCanvas.prototype.getContext = function (
+    this: WxOffscreenInstance,
+    type: string,
+    _opts?: unknown,
+  ): CanvasRenderingContext2D | null {
+    if (type !== '2d') return null
+    try {
+      const backing = getWxSharedOffscreenCanvas()
+      backing.width = Math.max(1, this.width || 1)
+      backing.height = Math.max(1, this.height || 1)
+      return getWxCanvas2dContext(backing)
+    } catch {
+      return null
+    }
+  }
+
+  g.OffscreenCanvas = WxOffscreenCanvas as unknown as typeof OffscreenCanvas
+}
+
+function patchWxCanvasFactories(): void {
+  const nativeCreate = wx.createCanvas.bind(wx)
+  wx.createCanvas = (() => ensureWxCanvasGetContext(nativeCreate())) as typeof wx.createCanvas
+
+  const wxApi = wx as WechatMinigame.Wx & {
+    createOffscreenCanvas?: (...args: unknown[]) => WechatMinigame.Canvas
+  }
+  if (typeof wxApi.createOffscreenCanvas === 'function') {
+    const nativeOff = wxApi.createOffscreenCanvas.bind(wxApi)
+    wxApi.createOffscreenCanvas = ((...args: unknown[]) =>
+      ensureWxCanvasGetContext(nativeOff(...args))) as typeof wxApi.createOffscreenCanvas
+  }
+}
+
 if (typeof wx !== 'undefined') {
   installIntlPolyfill()
 
@@ -376,14 +535,20 @@ if (typeof wx !== 'undefined') {
     removeEventListener?: (type: string, listener: EventListener) => void
   }
 
-  const canvas = wx.createCanvas()
+  patchWxCanvasFactories()
+  installOffscreenCanvasPolyfill()
+
+  const canvas = ensureWxCanvasGetContext(wx.createCanvas())
   setWxMainCanvas(canvas)
+  installWxDOMAdapter()
+  assertWxCanvasStackReady()
   const info = wx.getSystemInfoSync()
   const ratio = Math.min(info.pixelRatio || 1, 2)
   canvas.width = Math.floor(info.windowWidth * ratio)
   canvas.height = Math.floor(info.windowHeight * ratio)
 
   ensureGlobalConstructors(canvas)
+  installWxCanvasPrototypeGetContext(canvas)
 
   if (!g.window) g.window = g
   if (!g.navigator) g.navigator = { userAgent: 'WeChatMiniGame' }
@@ -397,7 +562,7 @@ if (typeof wx !== 'undefined') {
   g.fonts = fontFaceSet
 
   const { body: docBody } = installWxDocumentPolyfills(fontFaceSet)
-  installDocumentCreateElementPatch()
+  installDocumentCreateElementPatch(fontFaceSet)
   installCanvasDomPolyfills(canvas, info, docBody)
 
   ensureGlobalListener(g as Record<string, unknown>)

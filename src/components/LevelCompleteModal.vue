@@ -9,7 +9,6 @@ defineProps<{
 
 const emit = defineEmits<{
   next: []
-  replay: []
   home: []
 }>()
 </script>
@@ -49,7 +48,6 @@ const emit = defineEmits<{
           <GameIcon name="play" :size="16" :color="'var(--game-bg)'" />
           下一关
         </button>
-        <button class="btn outline ui-tap" @click="emit('replay')">重玩本关</button>
         <button class="btn ghost ui-tap" @click="emit('home')">
           <GameIcon name="home" :size="16" :color="'var(--game-text-muted)'" />
           回到首页

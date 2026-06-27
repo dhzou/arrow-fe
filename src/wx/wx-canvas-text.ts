@@ -118,21 +118,27 @@ export class WxCanvasText extends Sprite {
   }
 
   private async doBake(): Promise<void> {
+    const bakeText = this.content
+    const bakeStyle = { ...this.style }
     try {
       await withWxCanvasBakeLock(async () => {
       const dpr = Math.min(getPlatform().getDevicePixelRatio(), 3)
       const family = wxCanvasFontFamily()
-      const weight = this.style.fontWeight ?? '400'
-      const fontSize = this.style.fontSize
-      const align = this.style.align ?? 'center'
+      const weight = bakeStyle.fontWeight ?? '400'
+      const fontSize = bakeStyle.fontSize
+      const align = bakeStyle.align ?? 'center'
 
       const canvas = getWxSharedOffscreenCanvas()
+      const logicalFont = `${weight} ${fontSize}px ${family}`
+
+      // 重置共享 canvas，避免上一帧 transform / 尺寸污染度量
+      canvas.width = 1
+      canvas.height = 1
       const probe = getWxCanvas2dContext(canvas)
       if (!probe) return
-
-      const logicalFont = `${weight} ${fontSize}px ${family}`
+      probe.setTransform(1, 0, 0, 1, 0, 0)
       probe.font = logicalFont
-      const metrics = probe.measureText(this.content)
+      const metrics = probe.measureText(bakeText)
       const logicalW = Math.ceil(metrics.width) + this.padX * 2
       const logicalH = wxCanvasTextBlockHeight(fontSize, this.padY)
 
@@ -146,15 +152,15 @@ export class WxCanvasText extends Sprite {
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, logicalW, logicalH)
-      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingEnabled = false
       ctx.font = logicalFont
-      if (this.style.gradient) {
+      if (bakeStyle.gradient) {
         const grad = ctx.createLinearGradient(0, 0, logicalW, 0)
-        grad.addColorStop(0, hexColor(this.style.gradient[0]))
-        grad.addColorStop(1, hexColor(this.style.gradient[1]))
+        grad.addColorStop(0, hexColor(bakeStyle.gradient[0]))
+        grad.addColorStop(1, hexColor(bakeStyle.gradient[1]))
         ctx.fillStyle = grad
       } else {
-        const fill = this.style.fill ?? '#ffffff'
+        const fill = bakeStyle.fill ?? '#ffffff'
         ctx.fillStyle = fill.startsWith('#') ? fill : hexColor(Number(fill))
       }
       ctx.textBaseline = 'middle'
@@ -162,10 +168,16 @@ export class WxCanvasText extends Sprite {
 
       const textX =
         align === 'left' ? this.padX : align === 'right' ? logicalW - this.padX : logicalW / 2
-      ctx.fillText(this.content, Math.round(textX), Math.round(logicalH / 2))
+      ctx.fillText(bakeText, Math.round(textX), Math.round(logicalH / 2))
 
       await bakeCanvasToImageSprite(this, this.bakeState, canvas, dpr, logicalW, logicalH)
-      this.needsBake = false
+      if (this.content === bakeText && this.style.fontSize === bakeStyle.fontSize
+        && this.style.fontWeight === bakeStyle.fontWeight
+        && this.style.fill === bakeStyle.fill
+        && this.style.gradient?.[0] === bakeStyle.gradient?.[0]
+        && this.style.gradient?.[1] === bakeStyle.gradient?.[1]) {
+        this.needsBake = false
+      }
     })
     } catch (err) {
       console.warn('[WxCanvasText] bake failed:', this.content, err)

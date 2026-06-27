@@ -74,7 +74,7 @@ declare namespace WechatMinigame {
       fail?: () => void
       complete?: () => void
     }): void
-    createOffscreenCanvas?: (opts: { type: string; width: number; height: number }) => Canvas
+    createOffscreenCanvas?: (...args: unknown[]) => Canvas
     createWebAudioContext?: () => AudioContext
     createImage(): WechatMinigame.Image
     onShow?: (callback: () => void) => void

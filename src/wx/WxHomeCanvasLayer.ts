@@ -1,24 +1,34 @@
 import { Sprite, Texture } from 'pixi.js'
 import { drawHomeVisual, type HomeVisualHitRects } from '@/canvas-home/home-visual-draw'
-import type { HomeLayout, Rect } from '@/canvas-home/home-layout'
+import type { HomeLayout } from '@/canvas-home/home-layout'
 import { getPlatform, isWxMiniGame } from '@/platform'
 import {
   bakeCanvasToCanvasSprite,
+  bakeCanvasToImageSprite,
   destroyWxCanvasBakeState,
   invalidateWxCanvasBake,
+  isWxCanvasBakeBusy,
+  runWxCanvasBakeSync,
+  withWxCanvasBakeLock,
   type WxCanvasBakeState,
 } from '@/wx/wx-canvas-bake'
-import { getWxCanvas2dContext, getWxHomeVisualOffscreenCanvas } from '@/wx/canvas'
-import { wxHomeAnimFrame } from '@/wx/wx-home-anim'
+import { getWxCanvas2dContext, getWxHomeVisualCanvas, getWxSharedOffscreenCanvas, wxHomeVisualUsesSharedCanvas } from '@/wx/canvas'
+import { wxHomeAnimFrame, wxHomePreviewFrame } from '@/wx/wx-home-anim'
 
-/**
- * 微信首页视觉层 — Canvas 绘制 + CanvasSource 烘焙。
- * 避免 toDataURL + Image 全屏解码（首页动画卡顿主因）。
- */
+/** 微信首页视觉层 — 动效用 CanvasSource，静态首帧用 Image 烘焙 */
 export class WxHomeCanvasLayer extends Sprite {
   private readonly bakeState: WxCanvasBakeState = {}
   private cacheKey = ''
   private lastRects: HomeVisualHitRects | null = null
+  private baking: Promise<void> | null = null
+  private pending: {
+    screenW: number
+    screenH: number
+    safeTop: number
+    layout: HomeLayout
+    t: number
+    animated: boolean
+  } | null = null
 
   onTextureReady: (() => void) | null = null
 
@@ -26,7 +36,6 @@ export class WxHomeCanvasLayer extends Sprite {
     super(Texture.EMPTY)
   }
 
-  /** 布局变化 / 首次绘制 — 静态一帧 */
   refresh(
     screenW: number,
     screenH: number,
@@ -36,7 +45,6 @@ export class WxHomeCanvasLayer extends Sprite {
     return this.scheduleBake(screenW, screenH, safeTop, layout, 0, false)
   }
 
-  /** 首页动效 — 按 WX_HOME_ANIM_MS 节流重烘焙 */
   refreshAnimated(
     screenW: number,
     screenH: number,
@@ -51,7 +59,6 @@ export class WxHomeCanvasLayer extends Sprite {
     return this.lastRects
   }
 
-  /** 从后台恢复时清缓存，避免纹理失效导致黑屏 */
   invalidateBakedTexture(): void {
     this.cacheKey = ''
     invalidateWxCanvasBake(this, this.bakeState)
@@ -78,44 +85,102 @@ export class WxHomeCanvasLayer extends Sprite {
     this.height = screenH
 
     const base = this.layoutKey(screenW, screenH, safeTop, layout)
-    const key = animated ? `${base}|f${wxHomeAnimFrame(t)}` : base
+    const key = animated
+      ? `${base}|${wxHomeAnimFrame(t)}|${wxHomePreviewFrame(t)}`
+      : base
     if (key === this.cacheKey) return this.lastRects
 
     this.cacheKey = key
-    this.bake(screenW, screenH, safeTop, layout, t)
+
+    if (animated && isWxMiniGame()) {
+      return this.bakeAnimatedSync(screenW, screenH, safeTop, layout, t)
+    }
+
+    this.pending = { screenW, screenH, safeTop, layout, t, animated }
+    void this.ensureBaked()
     return this.lastRects
   }
 
-  private bake(
+  /** CanvasSource 同步路径 — 无 PNG 编解码，动效帧即时上屏 */
+  private bakeAnimatedSync(
     screenW: number,
     screenH: number,
     safeTop: number,
     layout: HomeLayout,
     t: number,
-  ): void {
-    const dpr = isWxMiniGame() ? Math.min(getPlatform().getDevicePixelRatio(), 3) : 2
-    const pixelW = Math.max(1, Math.ceil(screenW * dpr))
-    const pixelH = Math.max(1, Math.ceil(screenH * dpr))
-    const canvas = getWxHomeVisualOffscreenCanvas()
-    if (canvas.width !== pixelW || canvas.height !== pixelH) {
-      canvas.width = pixelW
-      canvas.height = pixelH
+  ): HomeVisualHitRects | null {
+    if (wxHomeVisualUsesSharedCanvas() && isWxCanvasBakeBusy()) {
+      return this.lastRects
     }
 
-    const ctx = getWxCanvas2dContext(canvas)
-    if (!ctx) return
+    const ok = runWxCanvasBakeSync(() => {
+      const dpr = Math.min(getPlatform().getDevicePixelRatio(), 2)
+      const pixelW = Math.max(1, Math.ceil(screenW * dpr))
+      const pixelH = Math.max(1, Math.ceil(screenH * dpr))
+      const canvas = getWxHomeVisualCanvas()
+      if (canvas.width !== pixelW || canvas.height !== pixelH) {
+        canvas.width = pixelW
+        canvas.height = pixelH
+      }
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, screenW, screenH)
+      const ctx = getWxCanvas2dContext(canvas)
+      if (!ctx) return
 
-    this.lastRects = drawHomeVisual(ctx, screenW, screenH, safeTop, layout, t, {
-      skipPreview: true,
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, screenW, screenH)
+
+      this.lastRects = drawHomeVisual(ctx, screenW, screenH, safeTop, layout, t, {
+        skipPreview: false,
+      })
+
+      bakeCanvasToCanvasSprite(this, this.bakeState, canvas)
+      this.width = screenW
+      this.height = screenH
     })
 
-    bakeCanvasToCanvasSprite(this, this.bakeState, canvas)
-    this.width = screenW
-    this.height = screenH
-    this.onTextureReady?.()
+    if (ok) this.onTextureReady?.()
+    return this.lastRects
+  }
+
+  private ensureBaked(): Promise<void> {
+    if (this.baking) return this.baking
+    this.baking = this.doBake().finally(() => {
+      this.baking = null
+      if (this.pending) void this.ensureBaked()
+    })
+    return this.baking
+  }
+
+  private async doBake(): Promise<void> {
+    const p = this.pending
+    if (!p) return
+    this.pending = null
+
+    await withWxCanvasBakeLock(async () => {
+      const dpr = isWxMiniGame() ? Math.min(getPlatform().getDevicePixelRatio(), 3) : 2
+      const pixelW = Math.max(1, Math.ceil(p.screenW * dpr))
+      const pixelH = Math.max(1, Math.ceil(p.screenH * dpr))
+      const canvas = getWxSharedOffscreenCanvas()
+      if (canvas.width !== pixelW || canvas.height !== pixelH) {
+        canvas.width = pixelW
+        canvas.height = pixelH
+      }
+
+      const ctx = getWxCanvas2dContext(canvas)
+      if (!ctx) return
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, p.screenW, p.screenH)
+
+      this.lastRects = drawHomeVisual(ctx, p.screenW, p.screenH, p.safeTop, p.layout, p.t, {
+        skipPreview: !isWxMiniGame(),
+      })
+
+      await bakeCanvasToImageSprite(this, this.bakeState, canvas, dpr, p.screenW, p.screenH)
+      this.width = p.screenW
+      this.height = p.screenH
+      this.onTextureReady?.()
+    })
   }
 
   override destroy(options?: Parameters<Sprite['destroy']>[0]): void {

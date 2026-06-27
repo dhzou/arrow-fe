@@ -6,9 +6,9 @@ import {
   BOARD_ZOOM_MIN,
   BOARD_ZOOM_STEP,
 } from '@/game/game-ui-content'
+import { snapBoardZoom, touchSpan, zoomFromPinchSpan } from '@/game/board-gesture'
 import { isPathStyleLevel, isCompactPathLevel } from '@/game-core/snake-difficulty'
 import { getPlatform, wxPlatform } from '@/platform'
-import { getWxMainCanvas } from '@/wx/canvas'
 import { SnakeRenderer } from '@/renderer/SnakeRenderer'
 import { playSound, resumeAudio } from '@/utils/sound'
 import { MINIGAME_STORE } from '@/game/game-ui-content'
@@ -44,6 +44,12 @@ export class WxGameApp {
   private zoomScrubbing = false
   private zoomScrubRaf: number | null = null
   private zoomScrubPending: number | null = null
+  /** 棋盘双指捏合缩放 */
+  private boardPinchActive = false
+  private boardPinchStartSpan = 0
+  private boardPinchStartZoom = 1
+  private suppressBoardTap = false
+  private suppressBoardTapTimer: number | null = null
   private unsubResize: (() => void) | null = null
   private loadError = ''
   private screen: WxScreen = 'home'
@@ -58,6 +64,9 @@ export class WxGameApp {
   private completeAnimLastMs = 0
   private homeDecorFrame = -1
   private homePreviewFrame = -1
+  private homeAnimRaf = 0
+  private homeAnimKey = ''
+  private homeAnimLastTs = 0
   /** 首页文字烘焙完成后再启动装饰动画，避免首屏空白→文字→动效连环闪动 */
   private homeTextsReady = false
   private homeDecorStartMs = 0
@@ -74,9 +83,8 @@ export class WxGameApp {
     this.platform.showShareMenu?.({ title: `${MINIGAME_STORE.shareTitle} - ${MINIGAME_STORE.shareText}` })
     initWxCloud()
 
-    const canvas = getWxMainCanvas()
     const metrics = this.platform.getScreenMetrics()
-    await this.renderer.init(null, metrics.width, metrics.height, canvas)
+    await this.renderer.init(null, metrics.width, metrics.height)
 
     this.renderer.addOverlayLayer(this.hud)
     this.renderer.addOverlayLayer(this.home)
@@ -143,9 +151,7 @@ export class WxGameApp {
     })
 
     this.renderer.onCellClick((x, y) => void this.controller.handleTap(x, y))
-    this.unsubTouch = this.platform.onTouchEnd((x, y) => this.onTouchEnd(x, y))
-    this.unsubTouchStart = this.platform.onTouchStart?.((x, y) => this.onTouchStart(x, y)) ?? null
-    this.unsubTouchMove = this.platform.onTouchMove?.((x, y) => this.onTouchMove(x, y)) ?? null
+    this.installWxTouchGestures()
     this.unsubResize = this.platform.onWindowResize(() => void this.onResize())
 
     this.installAppLifecycle()
@@ -172,7 +178,7 @@ export class WxGameApp {
     await this.home.rebakeAllTexts()
   }
 
-  private applyScreen(): void {
+  private applyScreen(opts?: { preserveHomeVisual?: boolean }): void {
     if (this.screen !== 'home') {
       this.signInOpen = false
     }
@@ -187,46 +193,59 @@ export class WxGameApp {
     this.renderer.setGameplayVisible(this.screen === 'game')
     this.clearAllButtonPress()
     if (this.screen === 'home' && this.homeTextsReady) {
-      this.home.prepareForDisplay()
-      this.startHomeDecorLoop(this.homeDecorDelayOnShow)
-      this.homeDecorDelayOnShow = false
+      if (opts?.preserveHomeVisual) {
+        this.startHomeDecorLoop(false, true)
+      } else {
+        this.home.prepareForDisplay()
+        this.startHomeDecorLoop(this.homeDecorDelayOnShow)
+        this.homeDecorDelayOnShow = false
+      }
     } else {
       this.stopHomeDecorLoop()
     }
     this.renderer.forceRender()
   }
 
-  private startHomeDecorLoop(delayDecor = false): void {
-    this.homeDecorFrame = -1
-    this.homePreviewFrame = -1
+  private startHomeDecorLoop(delayDecor = false, preserveFrames = false): void {
+    if (!preserveFrames) {
+      this.homeDecorFrame = -1
+      this.homePreviewFrame = -1
+      this.homeAnimKey = ''
+    }
     this.homeDecorStartMs = delayDecor ? performance.now() + 480 : performance.now()
-    this.renderer.setHomeFrameListener((dtMs) => {
+    this.homeAnimLastTs = 0
+
+    const tick = (ts: number): void => {
       if (this.screen !== 'home') return
-      if (performance.now() < this.homeDecorStartMs) return
+      const now = typeof ts === 'number' ? ts : performance.now()
+      if (performance.now() < this.homeDecorStartMs) {
+        this.homeAnimRaf = this.platform.requestAnimationFrame(tick)
+        return
+      }
 
+      const dtMs = this.homeAnimLastTs > 0 ? Math.min(now - this.homeAnimLastTs, 48) : 16
+      this.homeAnimLastTs = now
       const t = this.home.advanceAnim(dtMs)
-      let dirty = false
-
-      const previewFrame = wxHomePreviewFrame(t)
-      if (previewFrame !== this.homePreviewFrame) {
-        this.homePreviewFrame = previewFrame
-        this.home.refreshPreview(t)
-        dirty = true
-      }
-
-      const decorFrame = wxHomeAnimFrame(t)
-      if (decorFrame !== this.homeDecorFrame) {
-        this.homeDecorFrame = decorFrame
+      const animKey = `${wxHomeAnimFrame(t)}|${wxHomePreviewFrame(t)}`
+      if (animKey !== this.homeAnimKey) {
+        this.homeAnimKey = animKey
+        this.homeDecorFrame = wxHomeAnimFrame(t)
+        this.homePreviewFrame = wxHomePreviewFrame(t)
         this.home.refreshVisualAnimated(t)
-        dirty = true
+        this.renderer.forceRender()
       }
 
-      if (dirty) this.renderer.forceRender()
-    })
+      this.homeAnimRaf = this.platform.requestAnimationFrame(tick)
+    }
+
+    this.homeAnimRaf = this.platform.requestAnimationFrame(tick)
   }
 
   private stopHomeDecorLoop(): void {
-    this.renderer.setHomeFrameListener(null)
+    if (this.homeAnimRaf) {
+      this.platform.cancelAnimationFrame(this.homeAnimRaf)
+      this.homeAnimRaf = 0
+    }
   }
 
   private installAppLifecycle(): void {
@@ -491,6 +510,114 @@ export class WxGameApp {
     }
   }
 
+  private installWxTouchGestures(): void {
+    const wxApi = wx as WechatMinigame.Wx & {
+      onTouchStart?: (cb: WechatMinigame.OnTouchEventCallback) => void
+      offTouchStart?: (cb: WechatMinigame.OnTouchEventCallback) => void
+      onTouchMove?: (cb: WechatMinigame.OnTouchEventCallback) => void
+      offTouchMove?: (cb: WechatMinigame.OnTouchEventCallback) => void
+      onTouchEnd?: (cb: WechatMinigame.OnTouchEventCallback) => void
+      offTouchEnd?: (cb: WechatMinigame.OnTouchEventCallback) => void
+    }
+
+    const onStart: WechatMinigame.OnTouchEventCallback = (ev) => {
+      if (this.tryBeginBoardPinch(ev.touches)) return
+      if (this.boardPinchActive || this.suppressBoardTap) return
+      const t = ev.touches[0]
+      if (t) this.onTouchStart(t.clientX, t.clientY)
+    }
+
+    const onMove: WechatMinigame.OnTouchEventCallback = (ev) => {
+      if (this.boardPinchActive && ev.touches.length >= 2) {
+        this.updateBoardPinch(ev.touches)
+        return
+      }
+      if (this.boardPinchActive || this.suppressBoardTap) return
+      const t = ev.touches[0]
+      if (t) this.onTouchMove(t.clientX, t.clientY)
+    }
+
+    const onEnd: WechatMinigame.OnTouchEventCallback = (ev) => {
+      if (this.boardPinchActive) {
+        if (ev.touches.length < 2) {
+          this.endBoardPinch()
+        }
+        if (ev.touches.length === 0) {
+          this.armSuppressBoardTap()
+        }
+        this.clearAllButtonPress()
+        return
+      }
+      if (this.suppressBoardTap) {
+        if (ev.touches.length === 0) {
+          this.armSuppressBoardTap()
+        }
+        this.clearAllButtonPress()
+        return
+      }
+      const t = ev.changedTouches[0]
+      if (t) this.onTouchEnd(t.clientX, t.clientY)
+    }
+
+    wxApi.onTouchStart?.(onStart)
+    wxApi.onTouchMove?.(onMove)
+    wxApi.onTouchEnd?.(onEnd)
+
+    this.unsubTouchStart = () => wxApi.offTouchStart?.(onStart)
+    this.unsubTouchMove = () => wxApi.offTouchMove?.(onMove)
+    this.unsubTouch = () => wxApi.offTouchEnd?.(onEnd)
+  }
+
+  private tryBeginBoardPinch(touches: WechatMinigame.Touch[]): boolean {
+    if (touches.length < 2) return false
+    if (this.screen !== 'game' || this.settingsOpen) return false
+    if (this.controller.overlay !== 'none' || this.controller.inputLocked) return false
+    if (!this.pinchTouchesOnBoard(touches)) return false
+
+    this.boardPinchActive = true
+    this.suppressBoardTap = true
+    this.zoomScrubbing = false
+    this.renderer.handleScreenPanEnd()
+    this.clearAllButtonPress()
+    this.boardPinchStartSpan = touchSpan(
+      touches.map((t) => ({ x: t.clientX, y: t.clientY })),
+    )
+    this.boardPinchStartZoom = this.boardZoom
+    return true
+  }
+
+  private pinchTouchesOnBoard(touches: WechatMinigame.Touch[]): boolean {
+    for (const t of touches) {
+      if (this.hud.isTouchOnChrome(t.clientX, t.clientY)) return false
+    }
+    return true
+  }
+
+  private updateBoardPinch(touches: WechatMinigame.Touch[]): void {
+    const span = touchSpan(touches.map((t) => ({ x: t.clientX, y: t.clientY })))
+    this.setZoom(
+      zoomFromPinchSpan(this.boardPinchStartSpan, span, this.boardPinchStartZoom),
+      false,
+    )
+  }
+
+  private endBoardPinch(): void {
+    if (!this.boardPinchActive) return
+    this.boardPinchActive = false
+    this.setZoom(snapBoardZoom(this.boardZoom), true)
+  }
+
+  private armSuppressBoardTap(): void {
+    this.suppressBoardTap = true
+    if (this.suppressBoardTapTimer !== null) {
+      this.platform.clearTimeout(this.suppressBoardTapTimer)
+    }
+    this.suppressBoardTapTimer = this.platform.setTimeout(() => {
+      this.suppressBoardTap = false
+      this.suppressBoardTapTimer = null
+    }, 120)
+  }
+
   private onTouchStart(x: number, y: number): void {
     void resumeAudio()
     if (this.screen === 'home' || this.screen === 'leaderboard') {
@@ -543,6 +670,10 @@ export class WxGameApp {
   }
 
   private onTouchEnd(x: number, y: number): void {
+    if (this.suppressBoardTap) {
+      this.clearAllButtonPress()
+      return
+    }
     if (this.zoomScrubbing) {
       this.applyZoomScrub(x, true)
       this.zoomScrubbing = false
@@ -627,12 +758,14 @@ export class WxGameApp {
     this.setZoom(val)
   }
 
-  private setZoom(value: number): void {
-    const next = Math.min(BOARD_ZOOM_MAX, Math.max(BOARD_ZOOM_MIN, value))
-    if (next === this.boardZoom) return
-    this.boardZoom = next
-    this.hud.updateZoom(next)
-    this.renderer.setZoom(next)
+  private setZoom(value: number, snap = true): void {
+    const raw = snap
+      ? snapBoardZoom(value)
+      : Math.min(BOARD_ZOOM_MAX, Math.max(BOARD_ZOOM_MIN, value))
+    if (raw === this.boardZoom) return
+    this.boardZoom = raw
+    this.hud.updateZoom(raw)
+    this.renderer.setZoom(raw)
   }
 
   private onTouch(x: number, y: number): void {
@@ -754,7 +887,7 @@ export class WxGameApp {
     if (action === 'back') {
       playSound('tap')
       this.screen = 'home'
-      this.applyScreen()
+      this.applyScreen({ preserveHomeVisual: true })
       this.syncHome()
       return
     }

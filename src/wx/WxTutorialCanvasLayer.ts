@@ -10,7 +10,7 @@ import {
   invalidateWxCanvasBake,
   type WxCanvasBakeState,
 } from '@/wx/wx-canvas-bake'
-import { getWxSharedOffscreenCanvas } from '@/wx/canvas'
+import { getWxSharedOffscreenCanvas, getWxCanvas2dContext } from '@/wx/canvas'
 import { wxHomeAnimFrame } from '@/wx/wx-home-anim'
 
 /** 微信新手引导 — Canvas 绘制 + Image 烘焙 */
@@ -110,7 +110,7 @@ export class WxTutorialCanvasLayer extends Sprite {
       canvas.height = pixelH
     }
 
-    const ctx = canvas.getContext('2d')
+    const ctx = getWxCanvas2dContext(canvas)
     if (!ctx) return
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)

@@ -8,6 +8,7 @@ import { WxHomeCanvasLayer } from '@/wx/WxHomeCanvasLayer'
 import { WxCanvasText, wxGradientTextStyle, wxTextStyle } from '@/wx/wx-canvas-text'
 import { HOME_CSS } from '@/canvas-home/home-css'
 import { MINIGAME_STORE } from '@/game/game-ui-content'
+import { isWxMiniGame } from '@/platform'
 import { WX_THEME } from '@/wx/wx-theme'
 
 export type WxHomeAction = 'start' | 'signin' | 'settings' | 'leaderboard' | 'none'
@@ -99,6 +100,9 @@ export class WxHomeOverlay extends Container {
     this.textLayer.addChild(this.chip1)
     this.textLayer.addChild(this.chip2)
     this.textLayer.addChild(this.startLabel)
+    if (isWxMiniGame()) {
+      this.previewLayer.visible = false
+    }
   }
 
   async loadAssets(_app: Application): Promise<void> {
@@ -150,6 +154,7 @@ export class WxHomeOverlay extends Container {
       }
       onReady()
     }
+    this.previewLayer.onTextureReady = onReady
   }
 
   layout(width: number, height: number, safeTop: number, safeBottom: number): void {
@@ -204,8 +209,9 @@ export class WxHomeOverlay extends Container {
     return this.animTick / 1000
   }
 
-  /** 预览蛇身 — 每帧 CanvasSource 更新 */
+  /** 预览蛇身 — 微信端已合并进 WxHomeCanvasLayer 动效层 */
   refreshPreview(t: number): void {
+    if (isWxMiniGame()) return
     const L = this.layoutCache
     if (!L) return
     const { preview } = L
@@ -273,7 +279,7 @@ export class WxHomeOverlay extends Container {
     )
     this.refreshVisual()
     this.layoutText()
-    if (this.layoutCache) {
+    if (this.layoutCache && !isWxMiniGame()) {
       const { preview } = this.layoutCache
       this.previewLayer.refresh(0, preview.x, preview.y, preview.w, preview.h)
     }

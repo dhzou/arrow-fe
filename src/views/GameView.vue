@@ -15,7 +15,6 @@ import {
   hudPauseLeft,
   hudSettingsLeft,
   hudSettingsIconSize,
-  hudSettingsSize,
 } from '@/game/game-ui-content'
 import { syncThemePack } from '@/game/apply-ui-theme'
 import {
@@ -297,6 +296,9 @@ async function initRenderer() {
     Math.max(1, rect.height || 360),
   )
   renderer.onCellClick((x, y) => void controller.handleTap(x, y))
+  renderer.onZoomChange = (z) => {
+    boardZoom.value = z
+  }
   await startSession()
 
   resizeObserver = new ResizeObserver((entries) => {
@@ -578,7 +580,6 @@ onUnmounted(() => {
       :moves="session.moves"
       :win-streak="progress.winStreak"
       @next="handleNext"
-      @replay="handleReplay"
       @home="goHome"
     />
 
@@ -712,11 +713,6 @@ onUnmounted(() => {
   width: 36px;
   height: 36px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
-}
-
-.game--l1 .hud-btn.settings {
-  width: v-bind('`${hudSettingsSize(true)}px`');
-  height: v-bind('`${hudSettingsSize(true)}px`');
 }
 
 .game--l1 .hud-btn.theme {
@@ -1004,8 +1000,6 @@ onUnmounted(() => {
 }
 
 .hud-btn.settings {
-  width: v-bind('`${hudSettingsSize(false)}px`');
-  height: v-bind('`${hudSettingsSize(false)}px`');
   border-color: color-mix(in srgb, var(--game-accent) 30%, transparent);
 }
 

@@ -11,7 +11,13 @@ import {
 import { isPathStyleLevel, isCompactPathLevel } from '@/game-core/snake-difficulty'
 import { getBoardTheme, boardThemeFrameBg, boardThemeHasChromeSplit, normalizeBoardThemeIndex } from '@/game/board-theme'
 import { getPlatform, isWxMiniGame } from '@/platform'
+import {
+  getWxMainCanvas,
+  resolveWxPixiInit,
+} from '@/wx/canvas'
+import { presentWxOffscreenToMain } from '@/wx/wx-canvas-present'
 import { GAME_HUD, l1PlateInsets, pathBottomHudHeight } from '@/game/game-ui-content'
+import { snapBoardZoom, touchSpan, zoomFromPinchSpan } from '@/game/board-gesture'
 import {
   cellCenter,
   computeSnakeLayout,
@@ -116,6 +122,15 @@ export class SnakeRenderer {
   private pointerStart = { x: 0, y: 0 }
   private panStart = { x: 0, y: 0 }
   private readonly panDragThreshold = 8
+  /** Web 双指缩放 */
+  private activePointers = new Map<number, { x: number; y: number }>()
+  private boardPinchActive = false
+  private boardPinchStartSpan = 0
+  private boardPinchStartZoom = 1
+  private boardGestureSuppressTap = false
+  private boardGestureSuppressTimer: number | null = null
+  /** 缩放变化时同步 UI（如 Web 滑条） */
+  onZoomChange: ((zoom: number) => void) | null = null
   private animating = false
   private cancelAnimation: (() => void) | null = null
   /** 参考 33333.mp4：匀速逐格滑出，无单独平移/渐隐阶段 */
@@ -147,6 +162,8 @@ export class SnakeRenderer {
   private levelNumber = 1
   /** L1 蛇群相对逻辑网格中心的像素偏移，用于视觉居中（关卡内锁定，避免蛇离场后面板跳动） */
   private boardCenterBias = { x: 0, y: 0 }
+  /** iOS 离屏 2d → 上屏 WebGL 合成 */
+  private wxPixiPresent: (() => void) | null = null
   private boardCenterBiasLocked = false
   private homeFrameListener: ((dtMs: number) => void) | null = null
   /** L1 参考线宽（棋盘坐标），配合 fit 补偿使屏幕线宽与前期一致 */
@@ -179,8 +196,19 @@ export class SnakeRenderer {
   private levelEntranceTotalMs = 0
   private levelEntranceLastRenderMs = 0
   private levelEntranceOnComplete: (() => void) | null = null
-  /** 微信 Canvas2D 下限制进关重绘频率，减轻每帧全量 clear+stroke */
-  private static readonly ENTRANCE_RENDER_INTERVAL_WX = 33
+  /** 进关动画：已完成蛇的静态层，避免每帧 clear+重绘全部 partially drawn 蛇 */
+  private levelEntranceDoneGfx: Graphics | null = null
+  private levelEntranceProgressCache: number[] = []
+  private levelEntranceBatchIndex = 0
+  private gridRevealLastRenderMs = 0
+  /** 微信 Canvas2D 下限制进关/格点重绘频率，减轻每帧全量 clear+stroke */
+  private static readonly ENTRANCE_RENDER_INTERVAL_WX = 48
+  private static readonly ENTRANCE_BATCH_INTERVAL_WX = 42
+  private static readonly GRID_REVEAL_INTERVAL_WX = 48
+  /** 微信：蛇数过多时跳过生长动画，改为分批或直接绘制 */
+  private static readonly ENTRANCE_INSTANT_WX_SNAKES = 100
+  private static readonly ENTRANCE_BATCH_WX_SNAKES = 36
+  private static readonly ENTRANCE_BATCH_SIZE_WX = 8
 
   /** 微信首页预览等 overlay 动效 — 走 Pixi ticker 与屏幕刷新同步 */
   setHomeFrameListener(listener: ((dtMs: number) => void) | null): void {
@@ -212,23 +240,25 @@ export class SnakeRenderer {
     this.destroy()
 
     const platform = getPlatform()
-    const wxCanvas = externalCanvas && isWxMiniGame()
+    const wxCanvas = isWxMiniGame()
+    const pixiInit = wxCanvas ? resolveWxPixiInit() : null
+    const renderCanvas = pixiInit?.canvas ?? externalCanvas
     const ratio = platform.getDevicePixelRatio()
     const w = Math.max(1, Math.floor(width))
     const h = Math.max(1, Math.floor(height))
 
-    if (wxCanvas && externalCanvas) {
-      externalCanvas.width = Math.floor(w * ratio)
-      externalCanvas.height = Math.floor(h * ratio)
+    if (wxCanvas && renderCanvas) {
+      renderCanvas.width = Math.floor(w * ratio)
+      renderCanvas.height = Math.floor(h * ratio)
     }
 
     this.app = new Application()
     await this.app.init({
-      canvas: externalCanvas,
+      canvas: renderCanvas,
       width: w,
       height: h,
-      // 微信小游戏 WebGL 上下文不可用，须用 Canvas 2D 渲染器
-      preference: wxCanvas ? 'canvas' : 'webgl',
+      // iOS 上屏无 2d 时须走离屏 canvas；禁止 webgl 以免 Pixi 回退到无主屏 2d 的 Canvas2D
+      preference: pixiInit?.preference ?? (wxCanvas ? 'canvas' : 'webgl'),
       backgroundColor: SNAKE_THEME.bg,
       backgroundAlpha: 1,
       antialias: !wxCanvas,
@@ -243,6 +273,17 @@ export class SnakeRenderer {
         accessibility?: { destroy: () => void }
       }
       renderer.accessibility?.destroy()
+
+      if (pixiInit?.needsPresent && renderCanvas) {
+        const offscreen = renderCanvas as WechatMinigame.Canvas
+        const main = getWxMainCanvas()
+        this.wxPixiPresent = () => presentWxOffscreenToMain(offscreen, main)
+        const origRender = this.app.render.bind(this.app)
+        this.app.render = () => {
+          origRender()
+          this.wxPixiPresent?.()
+        }
+      }
     }
 
     const canvas = this.app.canvas as HTMLCanvasElement
@@ -312,18 +353,65 @@ export class SnakeRenderer {
   }
 
   private onStagePointerDown = (e: FederatedPointerEvent): void => {
+    this.activePointers.set(e.pointerId, { x: e.globalX, y: e.globalY })
+    if (this.activePointers.size >= 2) {
+      this.beginBoardPinch()
+      return
+    }
+    if (this.boardPinchActive) return
     this.beginPanAt(e.globalX, e.globalY)
   }
 
   private onStagePointerMove = (e: FederatedPointerEvent): void => {
+    if (this.activePointers.has(e.pointerId)) {
+      this.activePointers.set(e.pointerId, { x: e.globalX, y: e.globalY })
+    }
+    if (this.boardPinchActive && this.activePointers.size >= 2) {
+      this.updateBoardPinch()
+      return
+    }
+    if (this.boardPinchActive) return
     this.updatePanAt(e.globalX, e.globalY)
   }
 
   private onStagePointerUp = (e: FederatedPointerEvent): void => {
+    this.activePointers.delete(e.pointerId)
+    if (this.boardPinchActive) {
+      if (this.activePointers.size < 2) {
+        this.endBoardPinch()
+      }
+      return
+    }
     const wasDrag = this.endPan()
-    if (!wasDrag) {
+    if (!wasDrag && !this.boardGestureSuppressTap) {
       this.handleTap(e.globalX, e.globalY)
     }
+  }
+
+  private beginBoardPinch(): void {
+    if (this.inputLocked || this.animating) return
+    this.boardPinchActive = true
+    this.boardGestureSuppressTap = true
+    this.endPan()
+    this.boardPinchStartSpan = touchSpan([...this.activePointers.values()])
+    this.boardPinchStartZoom = this.zoom
+  }
+
+  private updateBoardPinch(): void {
+    const span = touchSpan([...this.activePointers.values()])
+    this.setZoom(zoomFromPinchSpan(this.boardPinchStartSpan, span, this.boardPinchStartZoom))
+  }
+
+  private endBoardPinch(): void {
+    this.boardPinchActive = false
+    this.setZoom(snapBoardZoom(this.zoom))
+    if (this.boardGestureSuppressTimer !== null) {
+      getPlatform().clearTimeout(this.boardGestureSuppressTimer)
+    }
+    this.boardGestureSuppressTimer = getPlatform().setTimeout(() => {
+      this.boardGestureSuppressTap = false
+      this.boardGestureSuppressTimer = null
+    }, 120)
   }
 
   /** 微信端触摸转发：开始跟踪棋盘拖动 */
@@ -391,6 +479,13 @@ export class SnakeRenderer {
     this.activeHintSnakeId = null
     this.assistActive = false
     this.unbindStagePointer()
+    this.wxPixiPresent = null
+    this.activePointers.clear()
+    this.boardPinchActive = false
+    if (this.boardGestureSuppressTimer !== null) {
+      getPlatform().clearTimeout(this.boardGestureSuppressTimer)
+      this.boardGestureSuppressTimer = null
+    }
     this.app?.destroy(true, { children: true })
     this.app = null
     this.board = null
@@ -511,6 +606,7 @@ export class SnakeRenderer {
     }
     this.positionBoard()
     this.commitRender()
+    this.onZoomChange?.(this.zoom)
   }
 
   resetPan(): void {
@@ -705,7 +801,10 @@ export class SnakeRenderer {
     this.drawBoardGrid(gridWidth, gridHeight)
     this.drawDots(gridWidth, gridHeight)
     this.positionBoard()
-    this.app.render()
+    // 微信进关前已 drawSnakes=false，首帧交给 animateLevelEntrance，避免重复全屏 render
+    if (!(isWxMiniGame() && !drawSnakes)) {
+      this.app.render()
+    }
   }
 
   /** 进关：路径从尾到头逐条画出 */
@@ -732,9 +831,24 @@ export class SnakeRenderer {
         return
       }
 
+      if (isWxMiniGame() && snakes.length >= SnakeRenderer.ENTRANCE_INSTANT_WX_SNAKES) {
+        this.drawStaticSnakes(this.lastSnakes)
+        this.staticSnakesDrawSig = this.staticSnakesSignature(this.lastSnakes)
+        this.commitRender()
+        resolve()
+        return
+      }
+
+      if (isWxMiniGame() && snakes.length >= SnakeRenderer.ENTRANCE_BATCH_WX_SNAKES) {
+        this.startLevelEntranceBatch(resolve, snakes)
+        return
+      }
+
       this.levelEntranceActive = true
       this.levelEntranceSnakes = snakes
       this.levelEntranceOrder = this.sortSnakeEntranceOrder(snakes)
+      this.mountEntranceDoneGfx()
+      this.levelEntranceProgressCache = new Array(this.levelEntranceOrder.length).fill(0)
       const timing = this.computeEntranceTiming(snakes.length)
       this.levelEntranceSnakeMs = timing.snakeMs
       this.levelEntranceStaggerMs = timing.staggerMs
@@ -1497,11 +1611,74 @@ export class SnakeRenderer {
       this.cancelFrame(this.levelEntranceRaf)
       this.levelEntranceRaf = 0
     }
+    this.unmountEntranceDoneGfx()
     this.levelEntranceActive = false
     this.levelEntranceSnakes = []
     this.levelEntranceOrder = []
+    this.levelEntranceProgressCache = []
+    this.levelEntranceBatchIndex = 0
     this.levelEntranceLastRenderMs = 0
     this.levelEntranceOnComplete = null
+  }
+
+  private mountEntranceDoneGfx(): void {
+    this.unmountEntranceDoneGfx()
+    if (!this.board || !this.roadsStatic) return
+    this.levelEntranceDoneGfx = new Graphics()
+    const idx = this.board.getChildIndex(this.roadsStatic)
+    this.board.addChildAt(this.levelEntranceDoneGfx, idx)
+  }
+
+  private unmountEntranceDoneGfx(): void {
+    if (this.levelEntranceDoneGfx) {
+      this.levelEntranceDoneGfx.destroy()
+      this.levelEntranceDoneGfx = null
+    }
+  }
+
+  /** 微信中关：按批绘制完整蛇身，比逐条生长更省 Canvas2D */
+  private startLevelEntranceBatch(resolve: () => void, snakes: SnakePiece[]): void {
+    this.stopLevelEntrance()
+    this.levelEntranceActive = true
+    this.levelEntranceSnakes = snakes
+    this.levelEntranceOrder = this.sortSnakeEntranceOrder(snakes)
+    this.levelEntranceBatchIndex = 0
+    this.levelEntranceOnComplete = () => resolve()
+    this.mountEntranceDoneGfx()
+    this.roadsStatic!.clear()
+    this.headsStatic?.removeChildren()
+    this.tickLevelEntranceBatch()
+  }
+
+  private tickLevelEntranceBatch = (): void => {
+    const now = performance.now()
+    const throttled =
+      isWxMiniGame() &&
+      now - this.levelEntranceLastRenderMs < SnakeRenderer.ENTRANCE_BATCH_INTERVAL_WX
+
+    if (!throttled && this.levelEntranceDoneGfx) {
+      const end = Math.min(
+        this.levelEntranceBatchIndex + SnakeRenderer.ENTRANCE_BATCH_SIZE_WX,
+        this.levelEntranceOrder.length,
+      )
+      for (let i = this.levelEntranceBatchIndex; i < end; i++) {
+        const snake = this.levelEntranceSnakes[this.levelEntranceOrder[i]!]
+        if (!snake || snake.cells.length < 2) continue
+        const style = this.blockedSnakeIds.has(snake.id) ? this.blockedStyle() : this.snakeStyle()
+        this.drawSnakePolyline(this.levelEntranceDoneGfx, snake.cells, style, 1, snake.id)
+      }
+      this.levelEntranceBatchIndex = end
+      this.roadsStatic!.clear()
+      this.headsStatic?.removeChildren()
+      this.commitRender()
+      this.levelEntranceLastRenderMs = now
+    }
+
+    if (this.levelEntranceBatchIndex >= this.levelEntranceOrder.length) {
+      this.finishLevelEntrance()
+      return
+    }
+    this.levelEntranceRaf = this.scheduleFrame(this.tickLevelEntranceBatch)
   }
 
   private finishLevelEntrance(): void {
@@ -1538,9 +1715,9 @@ export class SnakeRenderer {
     totalMs: number
   } {
     const wx = isWxMiniGame()
-    const snakeMs = wx ? 280 : 380
-    const staggerMs = wx ? 32 : 48
-    const maxTotalMs = wx ? 1800 : 2800
+    const snakeMs = wx ? 240 : 380
+    const staggerMs = wx ? 28 : 48
+    const maxTotalMs = wx ? 1400 : 2800
     if (snakeCount <= 1) {
       return { snakeMs, staggerMs: 0, totalMs: snakeMs }
     }
@@ -1588,10 +1765,21 @@ export class SnakeRenderer {
       const progress = this.snakeEntranceProgress(orderIndex, now)
       if (progress <= 0) continue
 
+      const prev = this.levelEntranceProgressCache[orderIndex] ?? 0
       const style = this.blockedSnakeIds.has(snake.id) ? this.blockedStyle() : this.snakeStyle()
+
+      if (progress >= 1) {
+        if (prev < 1 && this.levelEntranceDoneGfx) {
+          this.drawSnakePolyline(this.levelEntranceDoneGfx, snake.cells, style, 1, snake.id)
+        }
+        this.levelEntranceProgressCache[orderIndex] = 1
+        continue
+      }
+
       const cells = cellsForRevealProgress(snake.cells, progress)
       if (cells.length === 0) continue
       this.drawSnakePolyline(this.roadsStatic, cells, style, 1, snake.id)
+      this.levelEntranceProgressCache[orderIndex] = progress
     }
   }
 
@@ -2002,11 +2190,20 @@ export class SnakeRenderer {
     if (this.gridRevealRaf) return
     const tick = () => {
       const now = performance.now()
-      this.finalizeCompletedReveals(now)
-      if (this.gridWidth > 0 && this.gridHeight > 0) {
-        this.drawBoardGrid(this.gridWidth, this.gridHeight)
+      const wxThrottle =
+        isWxMiniGame() &&
+        now - this.gridRevealLastRenderMs < SnakeRenderer.GRID_REVEAL_INTERVAL_WX
+
+      if (!wxThrottle) {
+        this.finalizeCompletedReveals(now)
+        if (this.gridWidth > 0 && this.gridHeight > 0) {
+          this.drawBoardGrid(this.gridWidth, this.gridHeight)
+        }
+        this.commitRender()
+        this.gridRevealLastRenderMs = now
+      } else {
+        this.finalizeCompletedReveals(now)
       }
-      this.commitRender()
 
       if (this.revealingGridCells.size > 0) {
         this.gridRevealRaf = this.scheduleFrame(tick)

@@ -1,6 +1,13 @@
 import { DOMParser } from '@xmldom/xmldom'
-import { AbstractRenderer, DOMAdapter, EventSystem } from 'pixi.js'
-import { getWxMainCanvas, getWxSharedOffscreenCanvas } from './canvas'
+import { DOMAdapter } from 'pixi-environment-adapter'
+import { AbstractRenderer } from 'pixi-abstract-renderer'
+import { EventSystem } from 'pixi-event-system'
+import { installWxDOMAdapter } from './wx-dom-adapter'
+import { patchCanvasPoolForWx } from './pixi-patch-canvas-pool'
+import { patchCanvasSourceForWx } from './pixi-patch-canvas-source'
+import { patchCanvasTextMetricsForWx } from './pixi-patch-canvas-text-metrics'
+
+let wxPixiAdapterInstalled = false
 
 function patchRendererSystemInstaller(): void {
   const proto = AbstractRenderer.prototype as {
@@ -15,11 +22,6 @@ function patchRendererSystemInstaller(): void {
     })
     return origAddSystems.call(this, valid)
   }
-}
-
-function contextConstructor<T>(ctx: object | null): T | null {
-  if (!ctx) return null
-  return Object.getPrototypeOf(ctx).constructor as T
 }
 
 function patchEventSystemForWx(): void {
@@ -39,73 +41,25 @@ function patchEventSystemForWx(): void {
   }
 }
 
-/** 将 Pixi DOM 适配器切换为微信实现（在 unsafe-eval 之后调用） */
+/** Pixi 类补丁 — 须在 pixi.js/browser 静态 import 之前完成 */
 export function installWxPixiAdapter(): void {
-  if (typeof wx === 'undefined') return
+  if (typeof wx === 'undefined' || wxPixiAdapterInstalled) return
+  wxPixiAdapterInstalled = true
 
+  installWxDOMAdapter()
+  patchCanvasSourceForWx()
+  patchCanvasTextMetricsForWx()
+  patchCanvasPoolForWx()
   patchRendererSystemInstaller()
   patchEventSystemForWx()
 
-  DOMAdapter.set({
-    createCanvas(width, height) {
-      const canvas = getWxSharedOffscreenCanvas()
-      if (width) canvas.width = width
-      if (height) canvas.height = height
-      return canvas
-    },
-    createImage() {
-      return wx.createImage()
-    },
-    getCanvasRenderingContext2D() {
-      const g = globalThis as typeof globalThis & {
-        CanvasRenderingContext2D?: typeof CanvasRenderingContext2D
-      }
-      if (g.CanvasRenderingContext2D) return g.CanvasRenderingContext2D
-      const ctx = getWxMainCanvas().getContext('2d')
-      const ctor = contextConstructor<typeof CanvasRenderingContext2D>(ctx)
-      if (!ctor) throw new Error('无法获取 CanvasRenderingContext2D')
-      g.CanvasRenderingContext2D = ctor
-      return ctor
-    },
-    getWebGLRenderingContext() {
-      const g = globalThis as typeof globalThis & {
-        WebGLRenderingContext?: typeof WebGLRenderingContext
-      }
-      if (g.WebGLRenderingContext) return g.WebGLRenderingContext
-      // Canvas2D 渲染路径；勿在上屏 canvas 申请 webgl（真机 SDK 会崩）
-      return null as unknown as typeof WebGLRenderingContext
-    },
-    getNavigator() {
-      return (globalThis as typeof globalThis & { navigator: Navigator }).navigator
-    },
-    getBaseUrl() {
-      return ''
-    },
-    getFontFaceSet() {
-      return (globalThis as typeof globalThis & { fonts: FontFaceSet }).fonts
-    },
-    fetch(url, options) {
-      if (typeof fetch === 'function') {
-        return fetch(url, options)
-      }
-      return new Promise((resolve, reject) => {
-        wx.request({
-          url: String(url),
-          method: (options?.method as 'GET' | 'POST' | undefined) ?? 'GET',
-          data: options?.body,
-          success(res) {
-            resolve(
-              new Response(typeof res.data === 'string' ? res.data : JSON.stringify(res.data), {
-                status: res.statusCode,
-              }),
-            )
-          },
-          fail: reject,
-        })
-      })
-    },
-    parseXML(xml) {
-      return new DOMParser().parseFromString(xml, 'text/xml')
-    },
-  })
+  const adapter = DOMAdapter.get()
+  if (adapter && typeof adapter === 'object') {
+    ;(adapter as { parseXML: (xml: string) => Document }).parseXML = (xml) =>
+      new DOMParser().parseFromString(xml, 'text/xml')
+  }
+}
+
+if (typeof wx !== 'undefined') {
+  installWxPixiAdapter()
 }

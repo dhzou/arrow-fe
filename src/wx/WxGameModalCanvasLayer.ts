@@ -12,7 +12,7 @@ import {
   withWxCanvasBakeLock,
   type WxCanvasBakeState,
 } from '@/wx/wx-canvas-bake'
-import { getWxSharedOffscreenCanvas } from '@/wx/canvas'
+import { getWxSharedOffscreenCanvas, getWxCanvas2dContext } from '@/wx/canvas'
 import { wxHomeAnimFrame } from '@/wx/wx-home-anim'
 
 export type GameModalPayload =
@@ -137,7 +137,7 @@ export class WxGameModalCanvasLayer extends Sprite {
         canvas.height = pixelH
       }
 
-      const ctx = canvas.getContext('2d')
+      const ctx = getWxCanvas2dContext(canvas)
       if (!ctx) return
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)

@@ -234,10 +234,15 @@ export class GameController {
     }
 
     playSound('move')
+    this.levelTimer.pause()
     this.renderer.animateMove(target, snapshot, current.width, current.height, () => {
       this.syncHudStats()
       if (result.type === 'complete') {
         this.onLevelComplete()
+        return
+      }
+      if (this.overlay === 'none') {
+        this.levelTimer.start()
       }
     })
   }
@@ -246,6 +251,7 @@ export class GameController {
     if (!this.session || this.overlay === 'complete') return
     playSound('complete')
     this.levelTimer.stop()
+    this.failReason = null
     this.overlay = 'complete'
     this.hooks.onOverlayChange?.('complete')
     this.inputLocked = false
@@ -284,7 +290,13 @@ export class GameController {
   }
 
   onTimeUp(): void {
-    if (!this.session || this.overlay !== 'none') return
+    if (!this.session || this.overlay === 'complete') return
+    // 最后一击已清盘但滑出动画未结束 — 应判通关，勿闪「时间到」
+    if (this.session.isComplete) {
+      this.onLevelComplete()
+      return
+    }
+    if (this.overlay !== 'none') return
     void triggerBlockedFeedback()
     this.failReason = 'time'
     this.overlay = 'failed'
@@ -561,6 +573,12 @@ export class GameController {
 
   private showShareHintToast(message: string): void {
     const platform = getPlatform()
+    // 微信端由 WxGameApp 调 wx.showToast，不再在 HUD Canvas 上叠一层 toast（易残留黑框）
+    if (typeof wx !== 'undefined') {
+      this.hooks.onShareHintGranted?.(message)
+      this.hooks.onHudSync?.()
+      return
+    }
     if (this.shareHintToastTimer !== null) {
       platform.clearTimeout(this.shareHintToastTimer)
     }
@@ -600,6 +618,12 @@ export class GameController {
     playSound('tap')
     if (this.overlay === 'pause') {
       this.closePause()
+    } else if (this.overlay === 'failed' || this.overlay === 'complete') {
+      this.overlay = 'none'
+      this.inputLocked = true
+      this.renderer.setInputLocked(true)
+      this.hooks.onOverlayChange?.('none')
+      this.hooks.onHudSync?.()
     }
     void this.startSession(this.session?.level.levelNumber)
   }

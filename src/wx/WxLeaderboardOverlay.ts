@@ -1,6 +1,7 @@
 import { Container, Graphics } from 'pixi.js'
 import { inRect, type Rect } from '@/canvas-home/home-layout'
 import { drawGlassPanel } from '@/wx/wx-draw'
+import { GAME_HUD } from '@/game/game-ui-content'
 import { drawWxButtonPressHighlight } from '@/wx/wx-button-press'
 import { WxCanvasText, wxTextStyle } from '@/wx/wx-canvas-text'
 import type { LeaderboardEntry, LeaderboardResult } from '@/wx/wx-ranking'
@@ -17,7 +18,7 @@ export type WxLeaderboardViewState =
 const ROW_H = 56
 const ROW_GAP = 10
 const PAGE_PAD = 16
-const BACK_SIZE = 44
+const BACK_SIZE = GAME_HUD.pauseSize
 const HEADER_LIST_GAP = 20
 const LIST_PAD_X = 16
 const BOTTOM_PAD = 16
@@ -118,7 +119,6 @@ export class WxLeaderboardOverlay extends Container {
 
     const headerTop = this.safeTop + PAGE_PAD
     this.backRect = { x: PAGE_PAD, y: headerTop, w: BACK_SIZE, h: BACK_SIZE }
-    drawGlassPanel(this.bg, this.backRect.x, this.backRect.y, BACK_SIZE, BACK_SIZE, BACK_SIZE / 2)
     this.drawBackArrow(this.backRect.x + BACK_SIZE / 2, this.backRect.y + BACK_SIZE / 2)
 
     this.titleText.x = this.screenW / 2

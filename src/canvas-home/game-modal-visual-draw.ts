@@ -111,18 +111,6 @@ function drawCompletePrimaryBtn(ctx: CanvasRenderingContext2D, rect: Rect): void
   ctx.fillText('下一关', x + iconSize + gap, cy)
 }
 
-function drawCompleteOutlineBtn(ctx: CanvasRenderingContext2D, rect: Rect): void {
-  const pillR = rect.h / 2
-  ctx.strokeStyle = hexCss(WX_THEME.accent, 0.45)
-  ctx.lineWidth = 1
-  roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, pillR)
-  ctx.stroke()
-  fillTextCenter(ctx, '重玩本关', rect.x + rect.w / 2, rect.y + rect.h / 2, {
-    fontSize: 15,
-    fill: hexCss(WX_THEME.warn),
-  })
-}
-
 function drawCompleteGhostBtn(ctx: CanvasRenderingContext2D, rect: Rect): void {
   const pillR = rect.h / 2
   ctx.fillStyle = hexCss(WX_THEME.glass, 0.06)
@@ -225,8 +213,6 @@ export function drawCompleteVisual(
     btnH +
     btnGap +
     btnH +
-    btnGap +
-    btnH +
     24
   const px = (w - pw) / 2
   const py = (h - ph) / 2
@@ -307,15 +293,11 @@ export function drawCompleteVisual(
   y += btnH + btnGap
 
   const secondary: Rect = { x: btnX, y, w: btnW, h: btnH }
-  drawCompleteOutlineBtn(ctx, secondary)
-  y += btnH + btnGap
-
-  const tertiary: Rect = { x: btnX, y, w: btnW, h: btnH }
-  drawCompleteGhostBtn(ctx, tertiary)
+  drawCompleteGhostBtn(ctx, secondary)
 
   ctx.restore()
 
-  return { hits: { primary, secondary, tertiary } }
+  return { hits: { primary, secondary } }
 }
 
 function drawFailedShareTimeBtn(

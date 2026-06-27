@@ -34,7 +34,7 @@ export const GAME_HUD = {
   /** 顶栏左侧按钮起始 inset */
   settingsLeft: 8,
   pauseSize: 40,
-  /** 顶栏设置按钮（较暂停略大，便于点按） */
+  /** @deprecated 设置按钮与暂停同尺寸，见 hudSettingsSize */
   settingsSize: 44,
   hudBtnGap: 8,
   /** 主题切换胶囊宽（双色点 + 「样式」） */
@@ -61,6 +61,7 @@ export const GAME_HUD = {
   /** 经典风顶栏胶囊高度 */
   hudBarHeight: 76,
   pathPauseSize: 30,
+  /** @deprecated 设置按钮与暂停同尺寸，见 hudSettingsSize */
   pathSettingsSize: 36,
   pathThemeBtnWidth: 34,
   pathHudBtnGap: 6,
@@ -113,14 +114,14 @@ export function hudSettingsLeft(pathStyle: boolean): number {
   return GAME_HUD.settingsLeft + btnSize + gap
 }
 
-/** 顶栏设置按钮尺寸 */
+/** 顶栏设置按钮尺寸（与暂停一致） */
 export function hudSettingsSize(pathStyle: boolean): number {
-  return pathStyle ? GAME_HUD.pathSettingsSize : GAME_HUD.settingsSize
+  return pathStyle ? GAME_HUD.pathPauseSize : GAME_HUD.pauseSize
 }
 
-/** 顶栏设置图标像素尺寸 */
+/** 顶栏设置图标像素尺寸（外圈与暂停同大，图标略大以便辨认） */
 export function hudSettingsIconSize(pathStyle: boolean): number {
-  return pathStyle ? 18 : 20
+  return pathStyle ? 20 : 22
 }
 
 /** L1 经典风白盘区 — 顶/底栏之间、左右贴边（与 Web HUD 对齐） */

@@ -217,6 +217,15 @@ export function drawGlassPanel(g: Graphics, x: number, y: number, w: number, h: 
   g.roundRect(x, y, w, h, r).stroke({ width: 1, color: WX_THEME.glassBorder, alpha: 0.12 })
 }
 
+/** 顶栏圆形导航按钮（返回 / 关闭），对齐 GAME_HUD.pauseSize */
+export function drawNavCircleButton(g: Graphics, rect: Rect): void {
+  const cx = rect.x + rect.w / 2
+  const cy = rect.y + rect.h / 2
+  const r = Math.min(rect.w, rect.h) / 2
+  drawVerticalGradientRect(g, rect.x, rect.y, rect.w, rect.h, 0x162234, 0x0a1220, r)
+  g.circle(cx, cy, r).stroke({ width: 1, color: WX_THEME.accent, alpha: 0.35 })
+}
+
 export function drawGlassPanelAccent(g: Graphics, x: number, y: number, w: number, h: number, r: number): void {
   g.roundRect(x, y, w, h, r).fill({ color: WX_THEME.surfaceStrong, alpha: 0.92 })
   g.roundRect(x, y, w, h, r).stroke({ width: 1, color: WX_THEME.border, alpha: 0.22 })

@@ -1,5 +1,6 @@
 import { CanvasSource, ImageSource, Texture } from 'pixi.js'
 import type { Sprite } from 'pixi.js'
+import { ensureWxCanvasGetContext } from './canvas'
 
 export interface WxCanvasBakeState {
   source?: ImageSource | CanvasSource
@@ -49,20 +50,18 @@ export async function bakeCanvasToImageSprite(
   }
 
   const img = await loadWxImage(dataUrl)
-  if (state.source instanceof ImageSource) {
-    state.source.resource = img as unknown as HTMLImageElement
-    state.source.update()
-  } else {
-    state.texture?.destroy(false)
-    state.source?.destroy()
-    state.source = new ImageSource({ resource: img as unknown as HTMLImageElement })
-    state.texture = new Texture({ source: state.source })
-    sprite.texture = state.texture
-  }
-  // 显式设定逻辑尺寸，避免真机上 scale(1/dpr) 与纹理分辨率不一致导致发糊或被挤压
-  sprite.scale.set(1)
-  sprite.width = logicalW
-  sprite.height = logicalH
+  const imgW = Math.max(1, img.width || pixelW)
+  const imgH = Math.max(1, img.height || pixelH)
+
+  // 微信真机上 ImageSource.update() 偶发不同步尺寸，复用会导致 sprite 被非等比缩放（文字发糊/压窄）
+  state.texture?.destroy(false)
+  state.source?.destroy()
+  state.source = new ImageSource({ resource: img as unknown as HTMLImageElement })
+  state.source.update()
+  state.texture = new Texture({ source: state.source })
+  sprite.texture = state.texture
+
+  sprite.scale.set(logicalW / imgW, logicalH / imgH)
 }
 
 /** 预览动画：CanvasSource 逐帧 update，独占 staging canvas */
@@ -71,7 +70,7 @@ export function bakeCanvasToCanvasSprite(
   state: WxCanvasBakeState,
   canvas: WechatMinigame.Canvas,
 ): Texture {
-  const resource = canvas as unknown as HTMLCanvasElement
+  const resource = ensureWxCanvasGetContext(canvas) as unknown as HTMLCanvasElement
   if (!state.source || !(state.source instanceof CanvasSource)) {
     state.texture?.destroy(false)
     state.source?.destroy()
@@ -99,9 +98,40 @@ export function invalidateWxCanvasBake(sprite: Sprite, state: WxCanvasBakeState)
 
 /** 微信真机离屏 canvas 仅一份，串行烘焙避免弹窗/HUD 文字互相覆盖 */
 let bakeQueue: Promise<void> = Promise.resolve()
+let bakeSyncBusy = false
+let bakeAsyncActive = 0
+
+/** 动效帧同步烘焙（CanvasSource 路径，无 toDataURL） */
+export function runWxCanvasBakeSync(fn: () => void): boolean {
+  if (bakeSyncBusy || bakeAsyncActive > 0) return false
+  bakeSyncBusy = true
+  try {
+    fn()
+    return true
+  } catch (err) {
+    console.warn('[wx] canvas bake sync failed:', err)
+    return false
+  } finally {
+    bakeSyncBusy = false
+  }
+}
+
+export function isWxCanvasBakeBusy(): boolean {
+  return bakeSyncBusy || bakeAsyncActive > 0
+}
 
 export function withWxCanvasBakeLock<T>(fn: () => Promise<T>): Promise<T> {
-  const run = bakeQueue.then(fn)
+  const run = bakeQueue.then(async () => {
+    while (bakeSyncBusy) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+    bakeAsyncActive++
+    try {
+      return await fn()
+    } finally {
+      bakeAsyncActive--
+    }
+  })
   bakeQueue = run.then(
     () => undefined,
     () => undefined,

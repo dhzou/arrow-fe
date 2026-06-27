@@ -11,7 +11,7 @@ import {
   invalidateWxCanvasBake,
   type WxCanvasBakeState,
 } from '@/wx/wx-canvas-bake'
-import { getWxSharedOffscreenCanvas } from '@/wx/canvas'
+import { getWxSharedOffscreenCanvas, getWxCanvas2dContext } from '@/wx/canvas'
 
 /** 微信设置弹窗 — Canvas 绘制 + Image 烘焙 */
 export class WxSettingsCanvasLayer extends Sprite {
@@ -79,7 +79,7 @@ export class WxSettingsCanvasLayer extends Sprite {
       canvas.height = pixelH
     }
 
-    const ctx = canvas.getContext('2d')
+    const ctx = getWxCanvas2dContext(canvas)
     if (!ctx) return
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)

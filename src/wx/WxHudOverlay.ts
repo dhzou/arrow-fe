@@ -2,7 +2,7 @@ import { Container, Graphics, Text, type TextStyle } from 'pixi.js'
 import { WxCanvasText, wxTextStyle, wxCanvasTextBlockHeight, wxCanvasTextEstimateWidth } from './wx-canvas-text'
 import type { FailReason, GameOverlay } from '@/game/GameController'
 import { isWxMiniGame, getPlatform } from '@/platform'
-import { GAME_HUD, FAIL_COPY, BOARD_ZOOM_MIN, BOARD_ZOOM_MAX, BOARD_ZOOM_STEP, pathToolColumnHeight, hudPauseLeft, hudSettingsLeft, hudSettingsIconSize, hudSettingsSize } from '@/game/game-ui-content'
+import { GAME_HUD, FAIL_COPY, BOARD_ZOOM_MIN, BOARD_ZOOM_MAX, BOARD_ZOOM_STEP, pathToolColumnHeight, hudPauseLeft, hudSettingsLeft, hudSettingsIconSize } from '@/game/game-ui-content'
 import { formatLevelTime } from '@/game-core/level-timer'
 import {
   boardThemeFrameText,
@@ -76,7 +76,11 @@ export interface WxHudState {
 /** 微信小游戏 Canvas HUD（无 DOM） */
 export class WxHudOverlay extends Container {
   private readonly bgTop = new Graphics()
+  /** 顶栏中部（关卡/倒计时/生命）— 与 pause/settings 分离，倒计时 tick 时不必整栏 clear */
+  private readonly topCenterGfx = new Graphics()
   private readonly bgBottom = new Graphics()
+  /** 分享 toast 独立层，禁止画在 bgTop（否则清除 top 时易与计时器叠影） */
+  private readonly shareToastGfx = new Graphics()
   /** 缩放滑条轨道/滑块 — 与底栏分离，缩放时只重绘此层 */
   private readonly zoomDynamicGfx = new Graphics()
   private readonly modalContent = new Graphics()
@@ -152,6 +156,8 @@ export class WxHudOverlay extends Container {
   private tutorialPrimaryRect: Rect = { x: 0, y: 0, w: 0, h: 0 }
   private lastTopSig = ''
   private lastBottomSig = ''
+  private lastShareToastSig = ''
+  private lastTimerSec = -1
   private zoomPathStyle = false
   private zoomChromeSplit = false
   private pressedAction: WxHudAction | null = null
@@ -166,7 +172,9 @@ export class WxHudOverlay extends Container {
     super()
     this.eventMode = 'none'
     this.addChild(this.bgTop)
+    this.addChild(this.topCenterGfx)
     this.addChild(this.bgBottom)
+    this.addChild(this.shareToastGfx)
     this.addChild(this.zoomDynamicGfx)
     this.hudTextLayer.addChild(this.levelCanvasText)
     this.hudTextLayer.addChild(this.timerCanvasText)
@@ -268,12 +276,22 @@ export class WxHudOverlay extends Container {
     this.hudRightInset = getPlatform().getScreenMetrics().hudRightInset
     this.lastTopSig = ''
     this.lastBottomSig = ''
+    this.lastShareToastSig = ''
+    this.lastTimerSec = -1
     this.redraw()
   }
 
   update(state: WxHudState): boolean {
+    const prevSec = this.state ? Math.floor(this.state.timeRemainingMs / 1000) : -1
     this.state = state
-    return this.redraw()
+    const nextSec = Math.floor(state.timeRemainingMs / 1000)
+    const timerTick = prevSec !== nextSec
+
+    const changed = this.redraw()
+    if (!changed && timerTick && !state.loadError && state.overlay === 'none' && !state.loading) {
+      return this.refreshTimerCenter(state)
+    }
+    return changed
   }
 
   /** 仅更新缩放滑条（拖动/步进时调用，避免整栏重绘） */
@@ -289,6 +307,8 @@ export class WxHudOverlay extends Container {
     this.pauseCanvasLayer.invalidateBakedTexture()
     this.gameModalCanvasLayer.invalidateBakedTexture()
     this.tutorialCanvasLayer.invalidateBakedTexture()
+    this.clearShareToast()
+    this.lastShareToastSig = ''
     void this.rebakeHudTexts()
     if (this.state) this.redraw()
   }
@@ -324,8 +344,7 @@ export class WxHudOverlay extends Container {
 
     if (s.overlay === 'complete') {
       if (inRect(x, y, this.modalPrimaryRect)) return 'modal-next'
-      if (inRect(x, y, this.modalSecondaryRect)) return 'modal-replay'
-      if (inRect(x, y, this.modalTertiaryRect)) return 'modal-home'
+      if (inRect(x, y, this.modalSecondaryRect)) return 'modal-home'
       return 'none'
     }
 
@@ -502,23 +521,24 @@ export class WxHudOverlay extends Container {
       return true
     }
 
-    const topSig = `${this.topBarSignature(s)}|${s.shareHintToast}`
+    const topSig = this.topBarSignature(s)
     const bottomSig = this.bottomToolsSignature(s)
     const topChanged = topSig !== this.lastTopSig
     const bottomChanged = bottomSig !== this.lastBottomSig
-    if (!topChanged && !bottomChanged) return false
+    const toastChanged = this.syncShareToast(s)
+    if (!topChanged && !bottomChanged && !toastChanged) return false
 
     const hudTop =
       this.safeTop + (s.isPathStyle ? GAME_HUD.pathTopPadding : GAME_HUD.topPadding)
 
     if (topChanged) {
       this.bgTop.clear()
+      this.topCenterGfx.clear()
       this.levelCanvasText.visible = false
       this.timerCanvasText.visible = false
-      this.shareToastText.visible = false
       this.drawTopBar(hudTop, s)
-      if (s.shareHintToast) this.drawShareToast(s.shareHintToast)
       this.lastTopSig = topSig
+      this.lastTimerSec = Math.floor(s.timeRemainingMs / 1000)
     }
 
     if (bottomChanged) {
@@ -543,10 +563,13 @@ export class WxHudOverlay extends Container {
 
   private redrawFull(s: WxHudState, modalOverlay: boolean): void {
     this.bgTop.clear()
+    this.topCenterGfx.clear()
     this.bgBottom.clear()
+    this.clearShareToast()
     this.zoomDynamicGfx.clear()
     this.lastTopSig = ''
     this.lastBottomSig = ''
+    this.lastShareToastSig = ''
     this.levelCanvasText.visible = false
     this.timerCanvasText.visible = false
     this.hintBadgeText.visible = false
@@ -554,7 +577,6 @@ export class WxHudOverlay extends Container {
     this.hintLabelText.visible = false
     this.assistLabelText.visible = false
     this.zoomBadgeText.visible = false
-    this.shareToastText.visible = false
     this.zoomTrackRect = { x: 0, y: 0, w: 0, h: 0 }
     this.zoomMinusRect = { x: 0, y: 0, w: 0, h: 0 }
     this.zoomPlusRect = { x: 0, y: 0, w: 0, h: 0 }
@@ -566,8 +588,8 @@ export class WxHudOverlay extends Container {
     if (!modalOverlay && !s.loadError) {
       this.drawTopBar(hudTop, s)
       this.drawBottomTools(s)
-      if (s.shareHintToast) this.drawShareToast(s.shareHintToast)
-      this.lastTopSig = `${this.topBarSignature(s)}|${s.shareHintToast}`
+      this.syncShareToast(s)
+      this.lastTopSig = this.topBarSignature(s)
       this.lastBottomSig = this.bottomToolsSignature(s)
     }
 
@@ -626,19 +648,39 @@ export class WxHudOverlay extends Container {
       if (hits) this.tutorialPrimaryRect = hits.primary
     }
 
-    if (s.shareHintToast) {
-      this.drawShareToast(s.shareHintToast)
-    } else {
-      this.shareToastText.visible = false
-    }
-
     if (!modalOverlay && !s.loadError) {
       void this.rebakeHudTexts()
     }
   }
 
   private topBarSignature(s: WxHudState): string {
-    return `${s.levelLabel}|${s.lives}|${Math.floor(s.timeRemainingMs / 1000)}|${s.isPathStyle}|${s.boardThemeIndex ?? 0}`
+    return `${s.levelLabel}|${s.lives}|${s.isPathStyle}|${s.boardThemeIndex ?? 0}`
+  }
+
+  /** 倒计时每秒 tick — 只刷新中部，避免整栏 clear + 全量重烘焙 */
+  private refreshTimerCenter(s: WxHudState): boolean {
+    const sec = Math.floor(s.timeRemainingMs / 1000)
+    if (sec === this.lastTimerSec) return false
+    this.lastTimerSec = sec
+
+    const hudTop = this.safeTop + (s.isPathStyle ? GAME_HUD.pathTopPadding : GAME_HUD.topPadding)
+    this.topCenterGfx.clear()
+
+    const centerX = this.screenW / 2
+    const pathStyle = s.isPathStyle
+    const theme = getBoardTheme(s.boardThemeIndex ?? 0)
+    const chromeSplit = pathStyle && boardThemeHasChromeSplit(theme)
+    const barH = pathStyle ? GAME_HUD.pathHudBarHeight : GAME_HUD.hudBarHeight
+    const barY = hudTop
+
+    if (pathStyle) {
+      this.drawPathTopCenter(centerX, barY + barH / 2, s, this.screenW, theme, chromeSplit)
+    } else {
+      this.drawClassicTopCenter(centerX, barY, barH, s)
+    }
+
+    void this.timerCanvasText.ensureBaked().then(() => this.onHudTextReady?.())
+    return true
   }
 
   private bottomToolsSignature(s: WxHudState): string {
@@ -655,7 +697,7 @@ export class WxHudOverlay extends Container {
     const barY = hudTop
     const innerPad = 5
     const pauseBtnSize = pathStyle ? GAME_HUD.pathPauseSize : GAME_HUD.pauseSize
-    const settingsBtnSize = hudSettingsSize(pathStyle)
+    const settingsBtnSize = pauseBtnSize
 
     if (!chromeSplit && !pathStyle) {
       drawHudGlassBar(this.bgTop, barX, barY, barW, barH, pathStyle)
@@ -740,7 +782,7 @@ export class WxHudOverlay extends Container {
     for (let i = 0; i < 3; i++) {
       const alive = i < s.lives
       drawHeart(
-        this.bgTop,
+        this.topCenterGfx,
         heartStartX + i * (heartSize + heartGap),
         statusCy,
         heartSize,
@@ -803,7 +845,7 @@ export class WxHudOverlay extends Container {
     for (let i = 0; i < 3; i++) {
       const alive = i < s.lives
       drawHeart(
-        this.bgTop,
+        this.topCenterGfx,
         heartStartX + i * heartGap,
         heartY,
         GAME_HUD.heartSize,
@@ -823,11 +865,11 @@ export class WxHudOverlay extends Container {
     pathStyle: boolean,
   ): void {
     const fill = urgent ? 0xff6b8a : pathStyle ? 0x0e1219 : 0x0a1220
-    this.bgTop.roundRect(x, y, w, h, h / 2).fill({
+    this.topCenterGfx.roundRect(x, y, w, h, h / 2).fill({
       color: fill,
       alpha: urgent ? 0.1 : pathStyle ? 0.55 : 0.55,
     })
-    this.bgTop.roundRect(x, y, w, h, h / 2).stroke({
+    this.topCenterGfx.roundRect(x, y, w, h, h / 2).stroke({
       width: 1,
       color: urgent ? 0xff6b8a : pathStyle ? 0xbcc6d8 : 0xffffff,
       alpha: urgent ? 0.45 : pathStyle ? 0.14 : 0.12,
@@ -1185,6 +1227,25 @@ export class WxHudOverlay extends Container {
     textNode.visible = true
   }
 
+  private clearShareToast(): void {
+    this.shareToastGfx.clear()
+    this.shareToastText.visible = false
+  }
+
+  /** @returns 是否有绘制变化 */
+  private syncShareToast(s: WxHudState): boolean {
+    if (isWxMiniGame() || !s.shareHintToast) {
+      if (!this.lastShareToastSig) return false
+      this.clearShareToast()
+      this.lastShareToastSig = ''
+      return true
+    }
+    if (s.shareHintToast === this.lastShareToastSig) return false
+    this.drawShareToast(s.shareHintToast)
+    this.lastShareToastSig = s.shareHintToast
+    return true
+  }
+
   private drawShareToast(message: string): void {
     const padX = 14
     const padY = 10
@@ -1204,11 +1265,12 @@ export class WxHudOverlay extends Container {
       18 -
       boxH / 2
 
-    this.bgTop.roundRect(x - boxW / 2, y - boxH / 2, boxW, boxH, 12).fill({
+    this.shareToastGfx.clear()
+    this.shareToastGfx.roundRect(x - boxW / 2, y - boxH / 2, boxW, boxH, 12).fill({
       color: 0x0a1220,
       alpha: 0.92,
     })
-    this.bgTop.roundRect(x - boxW / 2, y - boxH / 2, boxW, boxH, 12).stroke({
+    this.shareToastGfx.roundRect(x - boxW / 2, y - boxH / 2, boxW, boxH, 12).stroke({
       width: 1,
       color: 0x4deeea,
       alpha: 0.35,
