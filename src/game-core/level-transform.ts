@@ -1,5 +1,5 @@
 import type { GridPoint, SnakeLevelData, SnakePiece } from './snake-types'
-import { passesBakeLevelCheck, pointKey } from './snake-grid'
+import { isLevelSolvableForBake, passesBakeLevelCheck, pointKey } from './snake-grid'
 import { createRng, levelSeed, pickRandom } from './random'
 
 export type LevelTransform = 'id' | 'rot90' | 'rot180' | 'rot270' | 'flipX' | 'flipY'
@@ -212,6 +212,13 @@ function variantPasses(level: SnakeLevelData): boolean {
   return passesBakeLevelCheck(level.snakes, level.width, level.height)
 }
 
+function variantIsSolvable(level: SnakeLevelData): boolean {
+  return (
+    passesBakeLevelCheck(level.snakes, level.width, level.height) &&
+    isLevelSolvableForBake(level.snakes, level.width, level.height)
+  )
+}
+
 function swapSnakePaths(snakes: SnakePiece[], i: number, j: number): SnakePiece[] {
   if (i === j || !snakes[i] || !snakes[j]) return snakes
   const next = cloneVariantSnakes(snakes)
@@ -335,7 +342,7 @@ function generateLevelVariantFromBase(base: SnakeLevelData, levelNumber: number)
   const snakeCount = base.snakes.length
   const seed = levelSeed(levelNumber)
 
-  for (let attempt = 0; attempt < 80; attempt++) {
+  for (let attempt = 0; attempt < 200; attempt++) {
     const rng = createRng(seed + attempt * 3571)
     const level = applyVariantGlobalTransform(cloneVariantLevel(base), width, height, rng)
     const mutated = mutateVariantSnakes(level.snakes, width, height, rng)
@@ -343,13 +350,19 @@ function generateLevelVariantFromBase(base: SnakeLevelData, levelNumber: number)
 
     const candidate = finalizeVariant(levelNumber, width, height, mutated)
     if (candidate.snakes.length !== snakeCount) continue
-    if (!variantPasses(candidate)) continue
+    if (!variantIsSolvable(candidate)) continue
     return candidate
   }
 
-  const rng = createRng(seed)
-  const level = applyVariantGlobalTransform(cloneVariantLevel(base), width, height, rng)
-  return finalizeVariant(levelNumber, width, height, level.snakes)
+  // 变异可能破坏可解性：回退为仅变换/平移（母关可解时通常仍可行）
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const rng = createRng(seed + 80000 + attempt * 3571)
+    const level = applyVariantGlobalTransform(cloneVariantLevel(base), width, height, rng)
+    const candidate = finalizeVariant(levelNumber, width, height, level.snakes)
+    if (variantIsSolvable(candidate)) return candidate
+  }
+
+  return finalizeVariant(levelNumber, width, height, cloneVariantSnakes(base.snakes))
 }
 
 /** 由母关生成变体（L32+：平移/旋转/镜像 + 路径互换 + 缩长） */
