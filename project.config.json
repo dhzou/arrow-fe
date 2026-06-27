@@ -1,0 +1,16 @@
+{
+  "description": "箭头消消乐 - 轻策略益智解谜微信小游戏",
+  "packOptions": { "ignore": [], "include": [] },
+  "setting": {
+    "es6": true,
+    "postcss": true,
+    "minified": true,
+    "enhance": true,
+    "urlCheck": true
+  },
+  "compileType": "miniprogram",
+  "libVersion": "3.6.0",
+  "appid": "touristappid",
+  "projectname": "arrow-puzzle-mp",
+  "miniprogramRoot": "miniprogram/"
+}

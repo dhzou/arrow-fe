@@ -1,0 +1,40 @@
+@property --card-border-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+:root {
+  --game-bg: #0d1219;
+  --game-bg-soft: #121a24;
+  --game-board: #f7f8fa;
+  --game-surface: rgba(255, 255, 255, 0.05);
+  --game-surface-strong: rgba(14, 22, 34, 0.94);
+  --game-border: rgba(106, 150, 200, 0.28);
+  --game-border-strong: rgba(106, 150, 200, 0.52);
+  --game-text: #eef2f7;
+  --game-text-muted: #8fa0b4;
+  --game-text-dim: #667688;
+  --game-accent: #6a96c8;
+  --game-accent-2: #98b8dc;
+  --game-warn: #e8b44a;
+  --game-danger: #e63950;
+  --game-gradient: linear-gradient(90deg, #6a96c8, #98b8dc);
+  --game-gradient-warm: linear-gradient(90deg, var(--game-warn), var(--game-icon-assist));
+  --game-gradient-blue: linear-gradient(135deg, #4a78ac, #6a96c8);
+  --game-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  --game-glow: 0 0 24px rgba(106, 150, 200, 0.22);
+  --game-radius: 16px;
+  --game-radius-pill: 999px;
+  --game-glass: rgba(255, 255, 255, 0.06);
+  --game-glass-border: rgba(255, 255, 255, 0.12);
+  --game-icon-hint: #6a96c8;
+  --game-icon-assist: #e8b44a;
+  --game-icon-warm: #ff8c42;
+  --game-snake-from: #5a88bc;
+  --game-snake-to: #7aa8d4;
+  --game-snake-head: #4a78ac;
+  --game-assist-grid: #97a5b8;
+  --game-hint-ring: #ffd866;
+  --game-bounce: cubic-bezier(0.34, 1.45, 0.64, 1);
+}

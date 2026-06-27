@@ -1,0 +1,891 @@
+import { GameController } from '@/game/GameController'
+import { ProgressBridge } from '@/game/ProgressBridge'
+import {
+  BOARD_ZOOM_DEFAULT,
+  BOARD_ZOOM_MAX,
+  BOARD_ZOOM_MIN,
+  BOARD_ZOOM_STEP,
+} from '@/game/game-ui-content'
+import { isPathStyleLevel, isCompactPathLevel } from '@/game-core/snake-difficulty'
+import { getPlatform, wxPlatform } from '@/platform'
+import { getWxMainCanvas } from '@/wx/canvas'
+import { SnakeRenderer } from '@/renderer/SnakeRenderer'
+import { playSound, resumeAudio } from '@/utils/sound'
+import { MINIGAME_STORE } from '@/game/game-ui-content'
+import { WX_HOME_ANIM_MS, WX_HOME_ANIM_SPEED, wxHomeAnimFrame, wxHomePreviewFrame } from '@/wx/wx-home-anim'
+import { WxHomeOverlay, type WxHomeAction } from './WxHomeOverlay'
+import { WxHudOverlay, type WxHudAction, type WxHudState } from './WxHudOverlay'
+import { WxLeaderboardOverlay, type WxLeaderboardAction } from './WxLeaderboardOverlay'
+import { WxSettingsOverlay, type WxSettingsAction } from './WxSettingsOverlay'
+import { WxSignInOverlay, type WxSignInAction } from './WxSignInOverlay'
+import {
+  fetchLeaderboard,
+  initWxCloud,
+  isWxRankingAvailable,
+  submitRanking,
+} from './wx-ranking'
+
+type WxScreen = 'home' | 'game' | 'leaderboard'
+
+/** 微信小游戏启动器：首页 → 游戏 / 设置 / 选关 */
+export class WxGameApp {
+  private readonly platform = wxPlatform
+  private readonly progress = new ProgressBridge()
+  private readonly renderer = new SnakeRenderer()
+  private readonly home = new WxHomeOverlay()
+  private readonly settings = new WxSettingsOverlay()
+  private readonly leaderboard = new WxLeaderboardOverlay()
+  private readonly signIn = new WxSignInOverlay()
+  private readonly hud = new WxHudOverlay()
+  private controller!: GameController
+  private unsubTouch: (() => void) | null = null
+  private unsubTouchStart: (() => void) | null = null
+  private unsubTouchMove: (() => void) | null = null
+  private zoomScrubbing = false
+  private zoomScrubRaf: number | null = null
+  private zoomScrubPending: number | null = null
+  private unsubResize: (() => void) | null = null
+  private loadError = ''
+  private screen: WxScreen = 'home'
+  private boardZoom = BOARD_ZOOM_DEFAULT
+  private signInOpen = false
+  private settingsOpen = false
+  private tutorialDecorRaf: number | null = null
+  private tutorialClock = 0
+  private tutorialAnimLastMs = 0
+  private completeDecorRaf: number | null = null
+  private completeClock = 0
+  private completeAnimLastMs = 0
+  private homeDecorFrame = -1
+  private homePreviewFrame = -1
+  /** 首页文字烘焙完成后再启动装饰动画，避免首屏空白→文字→动效连环闪动 */
+  private homeTextsReady = false
+  private homeDecorStartMs = 0
+  /** 仅冷启动首次进首页时延迟装饰动画，子页面返回不延迟 */
+  private homeDecorDelayOnShow = true
+  private lifecycleInstalled = false
+
+  async start(): Promise<void> {
+    if (typeof globalThis !== 'undefined') {
+      ;(globalThis as typeof globalThis & { __PLATFORM__?: typeof wxPlatform }).__PLATFORM__ =
+        this.platform
+    }
+
+    this.platform.showShareMenu?.({ title: `${MINIGAME_STORE.shareTitle} - ${MINIGAME_STORE.shareText}` })
+    initWxCloud()
+
+    const canvas = getWxMainCanvas()
+    const metrics = this.platform.getScreenMetrics()
+    await this.renderer.init(null, metrics.width, metrics.height, canvas)
+
+    this.renderer.addOverlayLayer(this.hud)
+    this.renderer.addOverlayLayer(this.home)
+    this.renderer.addOverlayLayer(this.settings)
+    this.renderer.addOverlayLayer(this.leaderboard)
+    this.renderer.addOverlayLayer(this.signIn)
+
+    this.layoutOverlays(metrics)
+
+    const pixiApp = this.renderer.getPixiApp()
+    if (pixiApp) {
+      await Promise.race([
+        this.home.loadAssets(pixiApp),
+        new Promise<void>((resolve) => setTimeout(resolve, 6000)),
+      ])
+    }
+    this.homeTextsReady = true
+
+    this.home.bindCanvasTextureReady(() => {
+      if (this.screen === 'home' && this.homeDecorFrame >= 0) return
+      this.renderer.forceRender()
+    })
+    this.settings.bindCanvasTextureReady(() => this.renderer.forceRender())
+    this.hud.bindTutorialTextureReady(() => this.renderer.forceRender())
+    this.hud.bindPauseTextureReady(() => this.renderer.forceRender())
+    this.hud.bindHudTextReady(() => this.renderer.forceRender())
+    this.hud.bindGameModalTextureReady(() => this.renderer.forceRender())
+
+    const onPressVisualChange = (): void => {
+      this.renderer.forceRender()
+    }
+    this.home.onPressVisualChange = onPressVisualChange
+    this.settings.onPressVisualChange = onPressVisualChange
+    this.signIn.onPressVisualChange = onPressVisualChange
+    this.leaderboard.onPressVisualChange = onPressVisualChange
+    this.leaderboard.onContentReady = onPressVisualChange
+    this.hud.onPressVisualChange = onPressVisualChange
+
+    this.applyScreen()
+
+    this.controller = new GameController(this.renderer, this.progress, {
+      onHudSync: () => this.syncHud(),
+      onShareHintGranted: (message) => {
+        try {
+          wx.showToast?.({ title: message, icon: 'none', duration: 2200 })
+        } catch {
+          /* ignore */
+        }
+      },
+      onOverlayChange: () => {
+        this.syncHud()
+      },
+      onTutorialStep: () => {
+        this.syncHud()
+      },
+      onLoadError: (message) => {
+        this.loadError = message
+        this.syncHud()
+      },
+      onLoadingChange: () => this.syncHud(),
+      onLevelComplete: (_levelNumber, newCurrentLevel) => {
+        void submitRanking(newCurrentLevel)
+      },
+    })
+
+    this.renderer.onCellClick((x, y) => void this.controller.handleTap(x, y))
+    this.unsubTouch = this.platform.onTouchEnd((x, y) => this.onTouchEnd(x, y))
+    this.unsubTouchStart = this.platform.onTouchStart?.((x, y) => this.onTouchStart(x, y)) ?? null
+    this.unsubTouchMove = this.platform.onTouchMove?.((x, y) => this.onTouchMove(x, y)) ?? null
+    this.unsubResize = this.platform.onWindowResize(() => void this.onResize())
+
+    this.installAppLifecycle()
+    this.syncHome()
+    void this.syncRankingProgress()
+  }
+
+  /** 将本地进度同步到云端排行 */
+  private async syncRankingProgress(): Promise<void> {
+    if (!isWxRankingAvailable()) return
+    await submitRanking(this.progress.currentLevel)
+  }
+
+  private layoutOverlays(metrics: ReturnType<typeof wxPlatform.getScreenMetrics>): void {
+    this.home.layout(metrics.width, metrics.height, metrics.safeAreaTop, metrics.safeAreaBottom)
+    this.settings.layout(metrics.width, metrics.height, metrics.safeAreaTop)
+    this.leaderboard.layout(metrics.width, metrics.height, metrics.safeAreaTop, metrics.safeAreaBottom)
+    this.signIn.layout(metrics.width, metrics.height, metrics.safeAreaTop)
+    this.hud.layout(metrics.width, metrics.height, metrics.safeAreaTop, metrics.safeAreaBottom)
+  }
+
+  private async relayoutHomeTexts(metrics: ReturnType<typeof wxPlatform.getScreenMetrics>): void {
+    this.home.layout(metrics.width, metrics.height, metrics.safeAreaTop, metrics.safeAreaBottom)
+    await this.home.rebakeAllTexts()
+  }
+
+  private applyScreen(): void {
+    if (this.screen !== 'home') {
+      this.signInOpen = false
+    }
+    if (this.screen !== 'home' && this.screen !== 'game') {
+      this.settingsOpen = false
+    }
+    this.home.visible = this.screen === 'home'
+    this.settings.visible = this.settingsOpen && (this.screen === 'home' || this.screen === 'game')
+    this.leaderboard.visible = this.screen === 'leaderboard'
+    this.signIn.visible = this.signInOpen && this.screen === 'home'
+    this.hud.visible = this.screen === 'game'
+    this.renderer.setGameplayVisible(this.screen === 'game')
+    this.clearAllButtonPress()
+    if (this.screen === 'home' && this.homeTextsReady) {
+      this.home.prepareForDisplay()
+      this.startHomeDecorLoop(this.homeDecorDelayOnShow)
+      this.homeDecorDelayOnShow = false
+    } else {
+      this.stopHomeDecorLoop()
+    }
+    this.renderer.forceRender()
+  }
+
+  private startHomeDecorLoop(delayDecor = false): void {
+    this.homeDecorFrame = -1
+    this.homePreviewFrame = -1
+    this.homeDecorStartMs = delayDecor ? performance.now() + 480 : performance.now()
+    this.renderer.setHomeFrameListener((dtMs) => {
+      if (this.screen !== 'home') return
+      if (performance.now() < this.homeDecorStartMs) return
+
+      const t = this.home.advanceAnim(dtMs)
+      let dirty = false
+
+      const previewFrame = wxHomePreviewFrame(t)
+      if (previewFrame !== this.homePreviewFrame) {
+        this.homePreviewFrame = previewFrame
+        this.home.refreshPreview(t)
+        dirty = true
+      }
+
+      const decorFrame = wxHomeAnimFrame(t)
+      if (decorFrame !== this.homeDecorFrame) {
+        this.homeDecorFrame = decorFrame
+        this.home.refreshVisualAnimated(t)
+        dirty = true
+      }
+
+      if (dirty) this.renderer.forceRender()
+    })
+  }
+
+  private stopHomeDecorLoop(): void {
+    this.renderer.setHomeFrameListener(null)
+  }
+
+  private installAppLifecycle(): void {
+    if (this.lifecycleInstalled || typeof wx === 'undefined') return
+    this.lifecycleInstalled = true
+    wx.onShow?.(() => void this.onAppShow())
+    wx.onHide?.(() => this.onAppHide())
+  }
+
+  private onAppHide(): void {
+    this.stopHomeDecorLoop()
+    this.stopTutorialDecorLoop()
+    this.stopCompleteDecorLoop()
+  }
+
+  private async onAppShow(): Promise<void> {
+    this.resetOverlayAlphas()
+
+    const metrics = getPlatform().getScreenMetrics()
+    this.renderer.resize(metrics.width, metrics.height)
+    this.layoutOverlays(metrics)
+
+    this.home.recoverAfterBackground()
+    this.settings.recoverAfterBackground()
+    this.hud.recoverAfterBackground()
+
+    if (this.screen === 'game') {
+      this.controller.renderSession()
+      this.syncHud()
+      if (this.controller.tutorialStep > 0) {
+        this.startTutorialDecorLoop()
+      }
+      if (this.controller.overlay === 'complete') {
+        this.startCompleteDecorLoop()
+      }
+    } else if (this.screen === 'home') {
+      this.home.prepareForDisplay()
+      this.startHomeDecorLoop(false)
+      await this.relayoutHomeTexts(metrics)
+      this.syncHome()
+      if (this.settingsOpen) this.syncSettings()
+    } else if (this.screen === 'leaderboard') {
+      this.renderer.forceRender()
+    }
+
+    if (this.signInOpen) {
+      this.syncSignIn()
+    }
+
+    this.renderer.resumeAfterBackground()
+  }
+
+  private resetOverlayAlphas(): void {
+    for (const layer of [this.home, this.settings, this.leaderboard, this.signIn, this.hud]) {
+      layer.alpha = 1
+    }
+  }
+
+  private syncHome(): void {
+    this.home.update({
+      currentLevel: this.progress.currentLevel,
+      winStreak: this.progress.winStreak,
+      canClaimDailySignIn: this.progress.getDailySignInStatus().canClaim,
+    })
+    this.renderer.forceRender()
+  }
+
+  private syncSignIn(toast?: string): void {
+    this.signIn.setView({
+      status: this.progress.getDailySignInStatus(),
+      toast,
+    })
+    this.renderer.forceRender()
+  }
+
+  private syncSettings(): void {
+    this.settings.update({
+      soundEnabled: this.progress.soundEnabled,
+      boardThemeIndex: this.progress.boardThemeIndex,
+    })
+    this.renderer.forceRender()
+  }
+
+  private syncHud(): void {
+    if (this.screen !== 'game') return
+    const c = this.controller
+    const levelNumber = c.session?.level.levelNumber ?? this.progress.currentLevel
+    const zoomLocked =
+      c.inputLocked || c.overlay === 'pause' || c.levelLoading
+
+    const state: WxHudState = {
+      levelLabel: c.levelLabel,
+      lives: c.lives,
+      hintsRemaining: c.uiHintsRemaining,
+      assistsRemaining: c.uiAssistsRemaining,
+      hintActive: c.hintActive,
+      assistOn: c.assistOn,
+      inputLocked: c.inputLocked,
+      loading: c.levelLoading,
+      overlay: c.overlay,
+      tutorialStep: c.tutorialStep,
+      loadError: this.loadError,
+      winStreak: this.progress.winStreak,
+      moves: c.session?.moves ?? 0,
+      timeRemainingMs: c.timeRemainingMs,
+      failReason: c.failReason,
+      isPathStyle: isPathStyleLevel(levelNumber),
+      tutorialLevel: isCompactPathLevel(levelNumber),
+      boardZoom: this.boardZoom,
+      zoomLocked,
+      canShareForHint: c.canShareForHint(),
+      canShareForAssist: c.canShareForAssist(),
+      canShareForTime: c.canShareForTime(),
+      shareTimeRemaining: c.shareTimeRemaining(),
+      canShareForLife: c.canShareForLife(),
+      shareLifeRemaining: c.shareLifeRemaining(),
+      shareHintToast: c.shareHintToast,
+      boardThemeIndex: this.progress.boardThemeIndex,
+    }
+    if (this.hud.update(state)) {
+      this.renderer.forceRender()
+    }
+    this.syncTutorialDecorLoop()
+    this.syncCompleteDecorLoop()
+  }
+
+  private syncCompleteDecorLoop(): void {
+    if (this.screen === 'game' && this.controller?.overlay === 'complete') {
+      this.startCompleteDecorLoop()
+    } else {
+      this.stopCompleteDecorLoop()
+    }
+  }
+
+  private startCompleteDecorLoop(): void {
+    if (this.completeDecorRaf !== null) return
+    this.completeClock = 0
+    this.completeAnimLastMs = 0
+    const tick = (): void => {
+      if (this.screen !== 'game' || this.controller?.overlay !== 'complete') {
+        this.completeDecorRaf = null
+        return
+      }
+      this.completeDecorRaf = this.platform.requestAnimationFrame(tick)
+      const now = Date.now()
+      if (now - this.completeAnimLastMs < WX_HOME_ANIM_MS) return
+      this.completeAnimLastMs = now
+      this.completeClock += WX_HOME_ANIM_MS
+      this.hud.tickCompleteDecor(this.completeClock / 1000)
+      this.renderer.forceRender()
+    }
+    this.completeDecorRaf = this.platform.requestAnimationFrame(tick)
+  }
+
+  private stopCompleteDecorLoop(): void {
+    if (this.completeDecorRaf === null) return
+    this.platform.cancelAnimationFrame(this.completeDecorRaf)
+    this.completeDecorRaf = null
+  }
+
+  private syncTutorialDecorLoop(): void {
+    if (this.screen === 'game' && this.controller?.overlay === 'tutorial') {
+      this.startTutorialDecorLoop()
+    } else {
+      this.stopTutorialDecorLoop()
+    }
+  }
+
+  private startTutorialDecorLoop(): void {
+    if (this.tutorialDecorRaf !== null) return
+    this.tutorialClock = 0
+    this.tutorialAnimLastMs = 0
+    const tick = (): void => {
+      if (this.screen !== 'game' || this.controller?.overlay !== 'tutorial') {
+        this.tutorialDecorRaf = null
+        return
+      }
+      this.tutorialDecorRaf = this.platform.requestAnimationFrame(tick)
+      const now = Date.now()
+      if (now - this.tutorialAnimLastMs < WX_HOME_ANIM_MS) return
+      this.tutorialAnimLastMs = now
+      this.tutorialClock += WX_HOME_ANIM_MS
+      this.hud.tickTutorialDecor(this.tutorialClock / 1000)
+      this.renderer.forceRender()
+    }
+    this.tutorialDecorRaf = this.platform.requestAnimationFrame(tick)
+  }
+
+  private stopTutorialDecorLoop(): void {
+    if (this.tutorialDecorRaf === null) return
+    this.platform.cancelAnimationFrame(this.tutorialDecorRaf)
+    this.tutorialDecorRaf = null
+  }
+
+  private async enterGame(levelNumber?: number): Promise<void> {
+    await resumeAudio()
+    playSound('tap')
+    this.screen = 'game'
+    this.applyScreen()
+    this.boardZoom = BOARD_ZOOM_DEFAULT
+    this.renderer.setBoardThemeIndex(this.progress.boardThemeIndex)
+
+    // 从首页进入始终重新开局，避免沿用上次的半成品关卡
+    await this.controller.startSession(levelNumber)
+    this.syncHud()
+    this.hud.updateZoom(this.boardZoom)
+    this.renderer.setZoom(this.boardZoom)
+  }
+
+  private goHome(): void {
+    playSound('tap')
+    this.controller.devPlay = false
+    this.controller.closePause()
+    this.controller.stopLevelTimer()
+    this.settingsOpen = false
+    this.screen = 'home'
+    this.applyScreen()
+    this.syncHome()
+  }
+
+  private openSettings(): void {
+    playSound('tap')
+    this.settingsOpen = true
+    if (this.screen === 'game') {
+      this.controller.pauseForSettings()
+    }
+    this.syncSettings()
+    this.applyScreen()
+    this.renderer.forceRender()
+  }
+
+  private closeSettings(): void {
+    this.settingsOpen = false
+    if (this.screen === 'game') {
+      this.controller.resumeAfterSettings()
+    }
+    this.applyScreen()
+    this.renderer.forceRender()
+  }
+
+  private openLeaderboard(): void {
+    playSound('tap')
+    this.screen = 'leaderboard'
+    this.applyScreen()
+    void this.loadLeaderboard()
+  }
+
+  private async loadLeaderboard(): Promise<void> {
+    if (!isWxRankingAvailable()) {
+      this.leaderboard.setView({ phase: 'offline' })
+      return
+    }
+
+    this.leaderboard.setView({ phase: 'loading' })
+
+    try {
+      const data = await fetchLeaderboard(50)
+      this.leaderboard.setView({ phase: 'ready', data })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载失败'
+      this.leaderboard.setView({ phase: 'error', message })
+    }
+  }
+
+  private onTouchStart(x: number, y: number): void {
+    void resumeAudio()
+    if (this.screen === 'home' || this.screen === 'leaderboard') {
+      this.updateButtonPress(x, y)
+      return
+    }
+    if (this.screen !== 'game') return
+
+    if (this.settingsOpen) {
+      const themeIdx = this.settings.hitThemeIndex(x, y)
+      if (themeIdx !== null) {
+        this.settings.setPressState(null, themeIdx)
+        return
+      }
+      this.settings.setPressState(this.settings.hitTest(x, y), null)
+      return
+    }
+
+    const hudAction = this.hud.hitTest(x, y)
+    if (hudAction !== 'none') {
+      this.updateButtonPress(x, y)
+      return
+    }
+    this.hud.clearPress()
+
+    if (this.hud.canStartZoomScrub(x, y)) {
+      this.zoomScrubbing = true
+      this.applyZoomScrub(x, false)
+      return
+    }
+    if (this.controller.overlay !== 'none' || this.controller.inputLocked) return
+    if (this.hud.isTouchOnChrome(x, y)) return
+    if (this.boardZoom <= 1) return
+    this.renderer.handleScreenPanStart(x, y)
+  }
+
+  private onTouchMove(x: number, y: number): void {
+    if (this.screen === 'home' || this.screen === 'leaderboard') {
+      this.updateButtonPress(x, y)
+      return
+    }
+    if (this.screen === 'game' && !this.zoomScrubbing) {
+      this.updateButtonPress(x, y)
+    }
+    if (this.zoomScrubbing) {
+      this.applyZoomScrub(x, false)
+      return
+    }
+    this.renderer.handleScreenPanMove(x, y)
+  }
+
+  private onTouchEnd(x: number, y: number): void {
+    if (this.zoomScrubbing) {
+      this.applyZoomScrub(x, true)
+      this.zoomScrubbing = false
+      this.clearAllButtonPress()
+      return
+    }
+    if (this.renderer.handleScreenPanEnd()) {
+      this.clearAllButtonPress()
+      return
+    }
+    this.onTouch(x, y)
+    this.clearAllButtonPress()
+  }
+
+  private updateButtonPress(x: number, y: number): void {
+    if (this.screen === 'home') {
+      if (this.settingsOpen) {
+        const themeIdx = this.settings.hitThemeIndex(x, y)
+        if (themeIdx !== null) {
+          this.settings.setPressState(null, themeIdx)
+          return
+        }
+        this.settings.setPressState(this.settings.hitTest(x, y), null)
+        return
+      }
+      if (this.signInOpen) {
+        this.signIn.setPressedAction(this.signIn.hitTest(x, y))
+        return
+      }
+      this.home.setPressedAction(this.home.hitTest(x, y))
+      return
+    }
+    if (this.screen === 'leaderboard') {
+      this.leaderboard.setPressedAction(this.leaderboard.hitTest(x, y))
+      return
+    }
+    if (this.screen === 'game') {
+      if (this.settingsOpen) {
+        const themeIdx = this.settings.hitThemeIndex(x, y)
+        if (themeIdx !== null) {
+          this.settings.setPressState(null, themeIdx)
+          return
+        }
+        this.settings.setPressState(this.settings.hitTest(x, y), null)
+        return
+      }
+      this.hud.setPressedAction(this.hud.hitTest(x, y))
+    }
+  }
+
+  private clearAllButtonPress(): void {
+    this.home.clearPress()
+    this.settings.clearPress()
+    this.signIn.clearPress()
+    this.leaderboard.clearPress()
+    this.hud.clearPress()
+  }
+
+  private applyZoomScrub(x: number, snap: boolean): void {
+    const val = this.hud.zoomValueAtX(x, snap)
+    if (val === null) return
+    if (snap) {
+      this.flushZoomScrub(val)
+      return
+    }
+    this.zoomScrubPending = val
+    if (this.zoomScrubRaf !== null) return
+    this.zoomScrubRaf = this.platform.requestAnimationFrame(() => {
+      this.zoomScrubRaf = null
+      const pending = this.zoomScrubPending
+      this.zoomScrubPending = null
+      if (pending !== null) this.setZoom(pending)
+    })
+  }
+
+  private flushZoomScrub(val: number): void {
+    if (this.zoomScrubRaf !== null) {
+      this.platform.cancelAnimationFrame(this.zoomScrubRaf)
+      this.zoomScrubRaf = null
+    }
+    this.zoomScrubPending = null
+    this.setZoom(val)
+  }
+
+  private setZoom(value: number): void {
+    const next = Math.min(BOARD_ZOOM_MAX, Math.max(BOARD_ZOOM_MIN, value))
+    if (next === this.boardZoom) return
+    this.boardZoom = next
+    this.hud.updateZoom(next)
+    this.renderer.setZoom(next)
+  }
+
+  private onTouch(x: number, y: number): void {
+    if (this.screen === 'home') {
+      if (this.settingsOpen) {
+        const themeIdx = this.settings.hitThemeIndex(x, y)
+        if (themeIdx !== null) {
+          this.pickBoardTheme(themeIdx)
+          return
+        }
+        this.handleSettingsAction(this.settings.hitTest(x, y))
+        return
+      }
+      if (this.signInOpen) {
+        this.handleSignInAction(this.signIn.hitTest(x, y))
+        return
+      }
+      this.handleHomeAction(this.home.hitTest(x, y))
+      return
+    }
+    if (this.screen === 'leaderboard') {
+      this.handleLeaderboardAction(this.leaderboard.hitTest(x, y))
+      return
+    }
+
+    if (this.screen === 'game' && this.settingsOpen) {
+      const themeIdx = this.settings.hitThemeIndex(x, y)
+      if (themeIdx !== null) {
+        this.pickBoardTheme(themeIdx)
+        return
+      }
+      this.handleSettingsAction(this.settings.hitTest(x, y))
+      return
+    }
+
+    const zoomVal = this.hud.zoomValueAtTouch(x, y)
+    if (zoomVal !== null) {
+      void resumeAudio()
+      this.setZoom(zoomVal)
+      return
+    }
+
+    const action = this.hud.hitTest(x, y)
+    if (action !== 'none') {
+      this.handleHudAction(action)
+      return
+    }
+    if (this.controller.overlay !== 'none') return
+    this.renderer.handleScreenTap(x, y)
+  }
+
+  private handleHomeAction(action: WxHomeAction): void {
+    if (action === 'start') {
+      this.controller.devPlay = false
+      void this.enterGame()
+    } else if (action === 'settings') {
+      this.openSettings()
+    } else if (action === 'leaderboard') {
+      this.openLeaderboard()
+    } else if (action === 'signin') {
+      this.openSignIn()
+    }
+  }
+
+  private handleSignInAction(action: WxSignInAction): void {
+    if (action === 'close') {
+      playSound('tap')
+      this.closeSignIn()
+      return
+    }
+    if (action === 'claim') {
+      const result = this.progress.claimDailySignIn()
+      if (result.ok) {
+        playSound('complete')
+        this.syncSignIn(result.message)
+        this.syncHome()
+      } else {
+        playSound('tap')
+        this.syncSignIn()
+      }
+    }
+  }
+
+  private openSignIn(): void {
+    playSound('tap')
+    this.signInOpen = true
+    this.signIn.visible = true
+    this.syncSignIn()
+    this.playSignInEnterAnimation()
+  }
+
+  private closeSignIn(): void {
+    this.signInOpen = false
+    this.signIn.visible = false
+    this.renderer.forceRender()
+  }
+
+  /** 签到弹窗淡入 */
+  private playSignInEnterAnimation(): void {
+    this.signIn.alpha = 0
+    const start = performance.now()
+    const duration = 240
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / duration)
+      const ease = 1 - (1 - p) ** 3
+      this.signIn.alpha = ease
+      this.renderer.forceRender()
+      if (p < 1) {
+        getPlatform().requestAnimationFrame(tick)
+      } else {
+        this.signIn.alpha = 1
+        this.renderer.forceRender()
+      }
+    }
+    getPlatform().requestAnimationFrame(tick)
+  }
+
+  private handleLeaderboardAction(action: WxLeaderboardAction): void {
+    if (action === 'back') {
+      playSound('tap')
+      this.screen = 'home'
+      this.applyScreen()
+      this.syncHome()
+      return
+    }
+    if (action === 'retry') {
+      void this.loadLeaderboard()
+    }
+  }
+
+  private handleSettingsAction(action: WxSettingsAction): void {
+    switch (action) {
+      case 'close':
+        playSound('tap')
+        this.closeSettings()
+        break
+      case 'toggle-sound': {
+        const wasEnabled = this.progress.soundEnabled
+        this.progress.toggleSound()
+        if (!wasEnabled && this.progress.soundEnabled) {
+          void resumeAudio().then(() => playSound('tap'))
+        }
+        this.syncSettings()
+        break
+      }
+      default:
+        break
+    }
+  }
+
+  private pickBoardTheme(index: number): void {
+    if (index === this.progress.boardThemeIndex) return
+    playSound('tap')
+    this.progress.setBoardThemeIndex(index)
+    this.renderer.setBoardThemeIndex(this.progress.boardThemeIndex)
+    this.home.syncTheme()
+    this.syncSettings()
+    if (this.screen === 'game' && this.controller.session) {
+      this.controller.renderSession()
+    }
+  }
+
+  private handleHudAction(action: WxHudAction): void {
+    switch (action) {
+      case 'settings':
+        this.openSettings()
+        break
+      case 'pause':
+        this.controller.openPause()
+        break
+      case 'hint':
+        void resumeAudio()
+        this.controller.handleHint()
+        break
+      case 'assist':
+        void resumeAudio()
+        this.controller.handleAssist()
+        break
+      case 'zoom-in':
+        void resumeAudio()
+        this.setZoom(this.boardZoom + BOARD_ZOOM_STEP)
+        break
+      case 'zoom-out':
+        void resumeAudio()
+        this.setZoom(this.boardZoom - BOARD_ZOOM_STEP)
+        break
+      case 'modal-next':
+        this.controller.handleNext()
+        break
+      case 'modal-replay':
+        this.controller.handleReplay()
+        break
+      case 'modal-share-time':
+        void resumeAudio()
+        this.controller.handleShareForTime()
+        break
+      case 'modal-share-life':
+        void resumeAudio()
+        this.controller.handleShareForLife()
+        break
+      case 'modal-restart':
+        this.controller.handleReplay()
+        break
+      case 'modal-continue':
+        this.controller.closePause()
+        break
+      case 'modal-home':
+        this.controller.closePause()
+        this.goHome()
+        break
+      case 'tutorial-next':
+        this.controller.handleTutorialNext()
+        break
+      default:
+        break
+    }
+    this.syncHud()
+  }
+
+  private async onResize(): Promise<void> {
+    const metrics = getPlatform().getScreenMetrics()
+    this.renderer.resize(metrics.width, metrics.height)
+    this.layoutOverlays(metrics)
+    if (this.screen === 'game') {
+      this.controller.renderSession()
+      this.syncHud()
+    } else if (this.screen === 'leaderboard') {
+      this.leaderboard.layout(metrics.width, metrics.height, metrics.safeAreaTop, metrics.safeAreaBottom)
+      this.renderer.forceRender()
+    } else if (this.settingsOpen) {
+      this.syncSettings()
+    } else if (this.signInOpen) {
+      this.syncSignIn()
+    } else {
+      await this.relayoutHomeTexts(metrics)
+      this.syncHome()
+    }
+  }
+
+  destroy(): void {
+    this.stopHomeDecorLoop()
+    this.stopTutorialDecorLoop()
+    this.stopCompleteDecorLoop()
+    this.unsubTouch?.()
+    this.unsubTouchStart?.()
+    this.unsubTouchMove?.()
+    this.unsubResize?.()
+    this.controller?.destroy()
+    this.renderer.destroy()
+    this.home.destroy()
+    this.settings.destroy()
+    this.leaderboard.destroy()
+    this.signIn.destroy()
+    this.hud.destroy()
+  }
+}
