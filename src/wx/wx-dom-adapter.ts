@@ -2,10 +2,12 @@ import { DOMParser } from '@xmldom/xmldom'
 import { DOMAdapter } from 'pixi-environment-adapter'
 import { BrowserAdapter } from 'pixi-browser-adapter'
 import {
+  canUseWx2dCanvas,
   ensureWxCanvasGetContext,
   getWxCanvas2dContext,
   getWxMainCanvas,
   getWxSharedOffscreenCanvas,
+  probeWebGLConstructor,
 } from './canvas'
 
 type WxCanvasLike = WechatMinigame.Canvas & {
@@ -53,14 +55,27 @@ export function installWxDOMAdapter(): void {
       }
       if (g.WebGLRenderingContext) return g.WebGLRenderingContext
       try {
-        const gl = getWxMainCanvas().getContext?.('webgl')
-        const ctor = contextConstructor<typeof WebGLRenderingContext>(gl as object | null)
+        const main = getWxMainCanvas()
+        let gl: WebGLRenderingContext | null = null
+        if (!canUseWx2dCanvas(main)) {
+          // iOS：主屏无 2d，Pixi WebGL 直绘上屏
+          gl =
+            (main.getContext?.('webgl', { stencil: true }) as WebGLRenderingContext | null)
+        } else {
+          // Android：勿在主屏 probe webgl，用独立 canvas 取构造函数
+          const ctor = probeWebGLConstructor()
+          if (ctor) {
+            g.WebGLRenderingContext = ctor
+            return ctor
+          }
+        }
+        const ctor = contextConstructor<typeof WebGLRenderingContext>(gl)
         if (ctor) {
           g.WebGLRenderingContext = ctor
           return ctor
         }
       } catch {
-        /* iOS SDK 探测 webgl 可能抛错，忽略 */
+        /* 微信 SDK 探测 webgl 可能抛错，忽略 */
       }
       return null as unknown as typeof WebGLRenderingContext
     },

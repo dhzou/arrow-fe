@@ -3,7 +3,6 @@ import { DOMAdapter } from 'pixi-environment-adapter'
 import { AbstractRenderer } from 'pixi-abstract-renderer'
 import { EventSystem } from 'pixi-event-system'
 import { installWxDOMAdapter } from './wx-dom-adapter'
-import { patchCanvasPoolForWx } from './pixi-patch-canvas-pool'
 import { patchCanvasSourceForWx } from './pixi-patch-canvas-source'
 import { patchCanvasTextMetricsForWx } from './pixi-patch-canvas-text-metrics'
 
@@ -49,7 +48,6 @@ export function installWxPixiAdapter(): void {
   installWxDOMAdapter()
   patchCanvasSourceForWx()
   patchCanvasTextMetricsForWx()
-  patchCanvasPoolForWx()
   patchRendererSystemInstaller()
   patchEventSystemForWx()
 

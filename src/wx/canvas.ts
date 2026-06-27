@@ -7,15 +7,27 @@ let sharedOffscreen2d: WechatMinigame.Canvas | null = null
 /** 首页视觉动效专用离屏 canvas（CanvasSource 直出，避免与 UI 文字烘焙争用） */
 let homeVisualAnimCanvas: WechatMinigame.Canvas | null = null
 
-/** Pixi 专用离屏 2d（iOS 上屏 canvas 无 2d 时使用，与 UI 烘焙分离） */
-let pixiRenderCanvas: WechatMinigame.Canvas | null = null
-let pixiPresentToMain = false
-
 type WxCanvasLike = WechatMinigame.Canvas & {
   getContext?: (type: string, opts?: unknown) => CanvasRenderingContext2D | null
 }
 
 const canvasProxyCache = new WeakMap<object, WxCanvasLike>()
+
+/** 构建插件会把字面量 getContext("2d") 替换成 __WX_G2D__；探测须走原生避免死循环 */
+export const WX_CTX_2D = `${'2'}d`
+
+/** 直接调用 canvas 原生 2d，不经过 __WX_G2D__（能力探测与已确认可用的 canvas） */
+export function nativeWxGetContext2d(
+  canvas: WxCanvasLike,
+  opts?: unknown,
+): CanvasRenderingContext2D | null {
+  if (!canvas || typeof canvas.getContext !== 'function') return null
+  try {
+    return (canvas.getContext(WX_CTX_2D, opts) as CanvasRenderingContext2D | null) ?? null
+  } catch {
+    return null
+  }
+}
 
 export function isWxIosPlatform(): boolean {
   if (typeof wx === 'undefined') return false
@@ -72,7 +84,6 @@ export function installWxCanvasPrototypeGetContext(seed?: WxCanvasLike): void {
   tryAdd(seed)
   tryAdd(mainCanvas)
   tryAdd(sharedOffscreen2d)
-  tryAdd(pixiRenderCanvas)
   tryAdd(homeVisualAnimCanvas)
 
   const g = globalThis as typeof globalThis & {
@@ -155,7 +166,7 @@ export function canUseWx2dCanvas(
 ): canvas is WechatMinigame.Canvas {
   if (!canvas || typeof canvas.getContext !== 'function') return false
   try {
-    return !!canvas.getContext('2d')
+    return !!nativeWxGetContext2d(canvas)
   } catch {
     return false
   }
@@ -167,11 +178,7 @@ export function getWxCanvas2dContext(
 ): CanvasRenderingContext2D | null {
   const safe = ensureWxCanvasGetContext(canvas)
   if (!canUseWx2dCanvas(safe)) return null
-  try {
-    return safe.getContext('2d') as CanvasRenderingContext2D | null
-  } catch {
-    return null
-  }
+  return nativeWxGetContext2d(safe)
 }
 
 function tryCreateOffscreenCanvas(width: number, height: number): WechatMinigame.Canvas | null {
@@ -237,51 +244,65 @@ export type WxPixiRenderPreference = 'canvas' | 'webgl'
 export interface WxPixiInitConfig {
   canvas: WechatMinigame.Canvas
   preference: WxPixiRenderPreference
-  needsPresent: boolean
 }
+
+const WX_WEBGL_OPTS = { stencil: true } as const
 
 export function canUseWxWebglCanvas(
   canvas: WxCanvasLike | null | undefined,
 ): canvas is WechatMinigame.Canvas {
   if (!canvas || typeof canvas.getContext !== 'function') return false
   try {
-    return !!(canvas.getContext('webgl') || canvas.getContext('webgl2'))
+    // 微信 iOS 会返回假 webgl2，只探测 webgl
+    return !!canvas.getContext('webgl', WX_WEBGL_OPTS)
   } catch {
     return false
   }
 }
 
+/** 用独立 canvas 取 WebGLRenderingContext 构造函数，不污染上屏 2d（Android 安全） */
+export function probeWebGLConstructor(): typeof WebGLRenderingContext | null {
+  if (typeof wx === 'undefined') return null
+  try {
+    const probe = ensureWxCanvasGetContext(wx.createCanvas()) as WechatMinigame.Canvas
+    probe.width = 1
+    probe.height = 1
+    const gl =
+      (probe.getContext?.('webgl', WX_WEBGL_OPTS) as WebGLRenderingContext | null)
+    if (!gl) return null
+    return Object.getPrototypeOf(gl).constructor as typeof WebGLRenderingContext
+  } catch {
+    return null
+  }
+}
+
 /**
  * Pixi 渲染配置：
- * - 上屏有 2d → Canvas2D 直绘（Android 等）
- * - 上屏无 2d（iOS 典型）→ 专用离屏 2d + WebGL 合成，且 **仅** preference:canvas
- *   （禁止 webgl+主屏：Pixi 用离屏 canvas 测 WebGL 会失败并回退 Canvas2D，主屏又无 2d → setTransform 崩溃）
+ * - 上屏有 2d → Canvas2D 直绘（Android / iPad / 开发者工具）
+ * - 上屏无 2d 且 WebGL 可用 → WebGL 直绘（iPhone 典型）
  */
 export function resolveWxPixiInit(): WxPixiInitConfig {
   const main = getWxMainCanvas()
 
   if (canUseWx2dCanvas(main)) {
-    pixiRenderCanvas = main
-    pixiPresentToMain = false
-    return { canvas: main, preference: 'canvas', needsPresent: false }
+    try {
+      console.info('[arrow] pixi: canvas (main 2d direct)')
+    } catch {
+      /* ignore */
+    }
+    return { canvas: main, preference: 'canvas' }
   }
 
-  if (!pixiRenderCanvas || !canUseWx2dCanvas(pixiRenderCanvas)) {
-    pixiRenderCanvas = createWxOffscreen2d(main.width || 1, main.height || 1)
-    installWxCanvasPrototypeGetContext(pixiRenderCanvas)
+  if (canUseWxWebglCanvas(main)) {
+    try {
+      console.info('[arrow] pixi: webgl (main direct)')
+    } catch {
+      /* ignore */
+    }
+    return { canvas: main, preference: 'webgl' }
   }
-  pixiPresentToMain = true
-  return { canvas: pixiRenderCanvas, preference: 'canvas', needsPresent: true }
-}
 
-/** @deprecated 请用 resolveWxPixiInit */
-export function getWxPixiRenderCanvas(): WechatMinigame.Canvas {
-  return resolveWxPixiInit().canvas
-}
-
-/** @deprecated 请用 resolveWxPixiInit */
-export function wxPixiNeedsPresentToMain(): boolean {
-  return pixiPresentToMain
+  throw new Error('微信 canvas 既无 2d 也无 WebGL，无法初始化 Pixi 渲染器')
 }
 
 /**
@@ -295,11 +316,7 @@ export function getWxSharedOffscreenCanvas(): WechatMinigame.Canvas {
     sharedOffscreen2d = createWxOffscreen2d(1, 1)
     return sharedOffscreen2d
   } catch {
-    /* iOS 可能只允许一个离屏 2d 实例 */
-  }
-
-  if (pixiRenderCanvas && canUseWx2dCanvas(pixiRenderCanvas)) {
-    throw new Error('微信离屏 Canvas 不可用：UI 烘焙与 Pixi 渲染不能共用同一 canvas')
+    /* 微信离屏 2d 配额可能不足 */
   }
 
   throw new Error('微信离屏 Canvas 不可用')
@@ -325,7 +342,7 @@ export function assertWxCanvasStackReady(): void {
     if (typeof probe.getContext !== 'function') {
       throw new Error('OffscreenCanvas.getContext 未就绪')
     }
-    if (!probe.getContext('2d')) {
+    if (!nativeWxGetContext2d(probe as WxCanvasLike)) {
       throw new Error('OffscreenCanvas 2d 不可用')
     }
   }

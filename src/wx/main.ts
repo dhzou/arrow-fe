@@ -1,11 +1,9 @@
 /** 必须在任何 pixi 模块之前导入，微信环境禁止 eval */
 import './env-polyfills'
-/** Pixi 微信 shim + patch — 须在 unsafe-eval / browser 之前，避免 iOS 上 getContext 崩溃 */
 import './pixi-patch-canvas-text-metrics'
 import './pixi-patch-canvas-source'
 import 'pixi.js/unsafe-eval'
-import './pixi-patch-canvas-pool'
-import './pixi-patch-canvas-context-system'
+import './pixi-patch-gl-context-wx'
 import './pixi-adapter'
 import './pixi-wx-bootstrap'
 import * as Sound from '@/utils/sound'

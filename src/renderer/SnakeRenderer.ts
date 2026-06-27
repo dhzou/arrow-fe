@@ -11,11 +11,7 @@ import {
 import { isPathStyleLevel, isCompactPathLevel } from '@/game-core/snake-difficulty'
 import { getBoardTheme, boardThemeFrameBg, boardThemeHasChromeSplit, normalizeBoardThemeIndex } from '@/game/board-theme'
 import { getPlatform, isWxMiniGame } from '@/platform'
-import {
-  getWxMainCanvas,
-  resolveWxPixiInit,
-} from '@/wx/canvas'
-import { presentWxOffscreenToMain } from '@/wx/wx-canvas-present'
+import { resolveWxPixiInit } from '@/wx/canvas'
 import { GAME_HUD, l1PlateInsets, pathBottomHudHeight } from '@/game/game-ui-content'
 import { snapBoardZoom, touchSpan, zoomFromPinchSpan } from '@/game/board-gesture'
 import {
@@ -162,8 +158,6 @@ export class SnakeRenderer {
   private levelNumber = 1
   /** L1 蛇群相对逻辑网格中心的像素偏移，用于视觉居中（关卡内锁定，避免蛇离场后面板跳动） */
   private boardCenterBias = { x: 0, y: 0 }
-  /** iOS 离屏 2d → 上屏 WebGL 合成 */
-  private wxPixiPresent: (() => void) | null = null
   private boardCenterBiasLocked = false
   private homeFrameListener: ((dtMs: number) => void) | null = null
   /** L1 参考线宽（棋盘坐标），配合 fit 补偿使屏幕线宽与前期一致 */
@@ -257,8 +251,10 @@ export class SnakeRenderer {
       canvas: renderCanvas,
       width: w,
       height: h,
-      // iOS 上屏无 2d 时须走离屏 canvas；禁止 webgl 以免 Pixi 回退到无主屏 2d 的 Canvas2D
+      // Android 上屏 2d 直绘；iOS 无上屏 2d 时走 WebGL 直绘（resolveWxPixiInit）
       preference: pixiInit?.preference ?? (wxCanvas ? 'canvas' : 'webgl'),
+      // 微信 iOS 假 webgl2，强制 WebGL1
+      preferWebGLVersion: wxCanvas && pixiInit?.preference === 'webgl' ? 1 : 2,
       backgroundColor: SNAKE_THEME.bg,
       backgroundAlpha: 1,
       antialias: !wxCanvas,
@@ -273,17 +269,6 @@ export class SnakeRenderer {
         accessibility?: { destroy: () => void }
       }
       renderer.accessibility?.destroy()
-
-      if (pixiInit?.needsPresent && renderCanvas) {
-        const offscreen = renderCanvas as WechatMinigame.Canvas
-        const main = getWxMainCanvas()
-        this.wxPixiPresent = () => presentWxOffscreenToMain(offscreen, main)
-        const origRender = this.app.render.bind(this.app)
-        this.app.render = () => {
-          origRender()
-          this.wxPixiPresent?.()
-        }
-      }
     }
 
     const canvas = this.app.canvas as HTMLCanvasElement
@@ -479,7 +464,6 @@ export class SnakeRenderer {
     this.activeHintSnakeId = null
     this.assistActive = false
     this.unbindStagePointer()
-    this.wxPixiPresent = null
     this.activePointers.clear()
     this.boardPinchActive = false
     if (this.boardGestureSuppressTimer !== null) {
