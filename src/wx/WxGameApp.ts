@@ -8,6 +8,7 @@ import {
 } from '@/game/game-ui-content'
 import { snapBoardZoom, touchSpan, zoomFromPinchSpan } from '@/game/board-gesture'
 import { isPathStyleLevel, isCompactPathLevel } from '@/game-core/snake-difficulty'
+import { ensureSnakeLevelsLoaded } from '@/game-core/snake-levels'
 import { getPlatform, wxPlatform } from '@/platform'
 import { SnakeRenderer } from '@/renderer/SnakeRenderer'
 import { playSound, resumeAudio } from '@/utils/sound'
@@ -37,7 +38,7 @@ export class WxGameApp {
   private readonly leaderboard = new WxLeaderboardOverlay()
   private readonly signIn = new WxSignInOverlay()
   private readonly hud = new WxHudOverlay()
-  private controller!: GameController
+  private controller: GameController | null = null
   private unsubTouch: (() => void) | null = null
   private unsubTouchStart: (() => void) | null = null
   private unsubTouchMove: (() => void) | null = null
@@ -48,6 +49,7 @@ export class WxGameApp {
   private boardPinchActive = false
   private boardPinchStartSpan = 0
   private boardPinchStartZoom = 1
+  private boardPinchRenderRaf: number | null = null
   private suppressBoardTap = false
   private suppressBoardTapTimer: number | null = null
   private unsubResize: (() => void) | null = null
@@ -96,12 +98,10 @@ export class WxGameApp {
 
     const pixiApp = this.renderer.getPixiApp()
     if (pixiApp) {
-      await Promise.race([
-        this.home.loadAssets(pixiApp),
-        new Promise<void>((resolve) => setTimeout(resolve, 6000)),
-      ])
+      await this.home.loadAssets(pixiApp)
     }
     this.homeTextsReady = true
+    void ensureSnakeLevelsLoaded()
 
     this.home.bindCanvasTextureReady(() => {
       if (this.screen === 'home' && this.homeDecorFrame >= 0) return
@@ -125,6 +125,17 @@ export class WxGameApp {
 
     this.applyScreen()
 
+    this.platform.requestAnimationFrame(() => this.ensureController())
+    this.installWxTouchGestures()
+    this.unsubResize = this.platform.onWindowResize(() => void this.onResize())
+
+    this.installAppLifecycle()
+    this.syncHome()
+    void this.syncRankingProgress()
+  }
+
+  private ensureController(): GameController {
+    if (this.controller) return this.controller
     this.controller = new GameController(this.renderer, this.progress, {
       onHudSync: () => this.syncHud(),
       onShareHintGranted: (message) => {
@@ -149,14 +160,8 @@ export class WxGameApp {
         void submitRanking(newCurrentLevel)
       },
     })
-
-    this.renderer.onCellClick((x, y) => void this.controller.handleTap(x, y))
-    this.installWxTouchGestures()
-    this.unsubResize = this.platform.onWindowResize(() => void this.onResize())
-
-    this.installAppLifecycle()
-    this.syncHome()
-    void this.syncRankingProgress()
+    this.renderer.onCellClick((x, y) => void this.ensureController().handleTap(x, y))
+    return this.controller
   }
 
   /** 将本地进度同步到云端排行 */
@@ -212,7 +217,7 @@ export class WxGameApp {
       this.homePreviewFrame = -1
       this.homeAnimKey = ''
     }
-    this.homeDecorStartMs = delayDecor ? performance.now() + 480 : performance.now()
+    this.homeDecorStartMs = delayDecor ? performance.now() + 120 : performance.now()
     this.homeAnimLastTs = 0
 
     const tick = (ts: number): void => {
@@ -272,13 +277,14 @@ export class WxGameApp {
     this.settings.recoverAfterBackground()
     this.hud.recoverAfterBackground()
 
-    if (this.screen === 'game') {
-      this.controller.renderSession()
+    if (this.screen === 'game' && this.controller) {
+      const c = this.controller
+      c.renderSession()
       this.syncHud()
-      if (this.controller.tutorialStep > 0) {
+      if (c.tutorialStep > 0) {
         this.startTutorialDecorLoop()
       }
-      if (this.controller.overlay === 'complete') {
+      if (c.overlay === 'complete') {
         this.startCompleteDecorLoop()
       }
     } else if (this.screen === 'home') {
@@ -332,6 +338,7 @@ export class WxGameApp {
   private syncHud(): void {
     if (this.screen !== 'game') return
     const c = this.controller
+    if (!c) return
     const levelNumber = c.session?.level.levelNumber ?? this.progress.currentLevel
     const zoomLocked =
       c.inputLocked || c.overlay === 'pause' || c.levelLoading
@@ -373,7 +380,11 @@ export class WxGameApp {
   }
 
   private syncCompleteDecorLoop(): void {
-    if (this.screen === 'game' && this.controller?.overlay === 'complete') {
+    if (
+      this.screen === 'game' &&
+      this.controller?.overlay === 'complete' &&
+      !this.controller.levelLoading
+    ) {
       this.startCompleteDecorLoop()
     } else {
       this.stopCompleteDecorLoop()
@@ -385,7 +396,11 @@ export class WxGameApp {
     this.completeClock = 0
     this.completeAnimLastMs = 0
     const tick = (): void => {
-      if (this.screen !== 'game' || this.controller?.overlay !== 'complete') {
+      if (
+        this.screen !== 'game' ||
+        this.controller?.overlay !== 'complete' ||
+        this.controller?.levelLoading
+      ) {
         this.completeDecorRaf = null
         return
       }
@@ -449,7 +464,9 @@ export class WxGameApp {
     this.renderer.setBoardThemeIndex(this.progress.boardThemeIndex)
 
     // 从首页进入始终重新开局，避免沿用上次的半成品关卡
-    await this.controller.startSession(levelNumber)
+    this.ensureController().devPlay = false
+    await ensureSnakeLevelsLoaded()
+    await this.ensureController().startSession(levelNumber)
     this.syncHud()
     this.hud.updateZoom(this.boardZoom)
     this.renderer.setZoom(this.boardZoom)
@@ -457,9 +474,10 @@ export class WxGameApp {
 
   private goHome(): void {
     playSound('tap')
-    this.controller.devPlay = false
-    this.controller.closePause()
-    this.controller.stopLevelTimer()
+    const c = this.ensureController()
+    c.devPlay = false
+    c.closePause()
+    c.stopLevelTimer()
     this.settingsOpen = false
     this.screen = 'home'
     this.applyScreen()
@@ -470,7 +488,7 @@ export class WxGameApp {
     playSound('tap')
     this.settingsOpen = true
     if (this.screen === 'game') {
-      this.controller.pauseForSettings()
+      this.ensureController().pauseForSettings()
     }
     this.syncSettings()
     this.applyScreen()
@@ -480,7 +498,7 @@ export class WxGameApp {
   private closeSettings(): void {
     this.settingsOpen = false
     if (this.screen === 'game') {
-      this.controller.resumeAfterSettings()
+      this.ensureController().resumeAfterSettings()
     }
     this.applyScreen()
     this.renderer.forceRender()
@@ -571,7 +589,8 @@ export class WxGameApp {
   private tryBeginBoardPinch(touches: WechatMinigame.Touch[]): boolean {
     if (touches.length < 2) return false
     if (this.screen !== 'game' || this.settingsOpen) return false
-    if (this.controller.overlay !== 'none' || this.controller.inputLocked) return false
+    const c = this.controller
+    if (!c || c.overlay !== 'none' || c.inputLocked) return false
     if (!this.pinchTouchesOnBoard(touches)) return false
 
     this.boardPinchActive = true
@@ -595,15 +614,26 @@ export class WxGameApp {
 
   private updateBoardPinch(touches: WechatMinigame.Touch[]): void {
     const span = touchSpan(touches.map((t) => ({ x: t.clientX, y: t.clientY })))
-    this.setZoom(
-      zoomFromPinchSpan(this.boardPinchStartSpan, span, this.boardPinchStartZoom),
-      false,
-    )
+    const raw = zoomFromPinchSpan(this.boardPinchStartSpan, span, this.boardPinchStartZoom)
+    const next = Math.min(BOARD_ZOOM_MAX, Math.max(BOARD_ZOOM_MIN, raw))
+    if (next === this.boardZoom) return
+    this.boardZoom = next
+    this.hud.updateZoom(next)
+    this.renderer.setZoom(next, false)
+    if (this.boardPinchRenderRaf !== null) return
+    this.boardPinchRenderRaf = this.platform.requestAnimationFrame(() => {
+      this.boardPinchRenderRaf = null
+      this.renderer.forceRender()
+    })
   }
 
   private endBoardPinch(): void {
     if (!this.boardPinchActive) return
     this.boardPinchActive = false
+    if (this.boardPinchRenderRaf !== null) {
+      this.platform.cancelAnimationFrame(this.boardPinchRenderRaf)
+      this.boardPinchRenderRaf = null
+    }
     this.setZoom(snapBoardZoom(this.boardZoom), true)
   }
 
@@ -648,7 +678,8 @@ export class WxGameApp {
       this.applyZoomScrub(x, false)
       return
     }
-    if (this.controller.overlay !== 'none' || this.controller.inputLocked) return
+    const c = this.controller
+    if (c && (c.overlay !== 'none' || c.inputLocked)) return
     if (this.hud.isTouchOnChrome(x, y)) return
     if (this.boardZoom <= 1) return
     this.renderer.handleScreenPanStart(x, y)
@@ -813,13 +844,13 @@ export class WxGameApp {
       this.handleHudAction(action)
       return
     }
-    if (this.controller.overlay !== 'none') return
+    const c = this.controller
+    if (c && c.overlay !== 'none') return
     this.renderer.handleScreenTap(x, y)
   }
 
   private handleHomeAction(action: WxHomeAction): void {
     if (action === 'start') {
-      this.controller.devPlay = false
       void this.enterGame()
     } else if (action === 'settings') {
       this.openSettings()
@@ -923,26 +954,27 @@ export class WxGameApp {
     this.renderer.setBoardThemeIndex(this.progress.boardThemeIndex)
     this.home.syncTheme()
     this.syncSettings()
-    if (this.screen === 'game' && this.controller.session) {
-      this.controller.renderSession()
+    if (this.screen === 'game' && this.controller?.session) {
+      this.ensureController().renderSession()
     }
   }
 
   private handleHudAction(action: WxHudAction): void {
+    const c = this.ensureController()
     switch (action) {
       case 'settings':
         this.openSettings()
         break
       case 'pause':
-        this.controller.openPause()
+        c.openPause()
         break
       case 'hint':
         void resumeAudio()
-        this.controller.handleHint()
+        c.handleHint()
         break
       case 'assist':
         void resumeAudio()
-        this.controller.handleAssist()
+        c.handleAssist()
         break
       case 'zoom-in':
         void resumeAudio()
@@ -953,31 +985,31 @@ export class WxGameApp {
         this.setZoom(this.boardZoom - BOARD_ZOOM_STEP)
         break
       case 'modal-next':
-        this.controller.handleNext()
+        c.handleNext()
         break
       case 'modal-replay':
-        this.controller.handleReplay()
+        c.handleReplay()
         break
       case 'modal-share-time':
         void resumeAudio()
-        this.controller.handleShareForTime()
+        c.handleShareForTime()
         break
       case 'modal-share-life':
         void resumeAudio()
-        this.controller.handleShareForLife()
+        c.handleShareForLife()
         break
       case 'modal-restart':
-        this.controller.handleReplay()
+        c.handleReplay()
         break
       case 'modal-continue':
-        this.controller.closePause()
+        c.closePause()
         break
       case 'modal-home':
-        this.controller.closePause()
+        c.closePause()
         this.goHome()
         break
       case 'tutorial-next':
-        this.controller.handleTutorialNext()
+        c.handleTutorialNext()
         break
       default:
         break
@@ -990,7 +1022,7 @@ export class WxGameApp {
     this.renderer.resize(metrics.width, metrics.height)
     this.layoutOverlays(metrics)
     if (this.screen === 'game') {
-      this.controller.renderSession()
+      this.controller?.renderSession()
       this.syncHud()
     } else if (this.screen === 'leaderboard') {
       this.leaderboard.layout(metrics.width, metrics.height, metrics.safeAreaTop, metrics.safeAreaBottom)

@@ -47,7 +47,7 @@ exports.main = async (event) => {
       .limit(1)
       .get()
     const doc = existing.data[0]
-    const prev = doc?.count || 0
+    const prev = (doc && doc.count) || 0
 
     if (prev >= MAX_SHARE_PER_DAY) {
       return {

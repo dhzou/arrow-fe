@@ -4,11 +4,14 @@ import {
   drawFailedVisual,
   type GameModalHitRects,
 } from '@/canvas-home/game-modal-visual-draw'
-import { getPlatform } from '@/platform'
+import { getPlatform, isWxMiniGame } from '@/platform'
 import {
+  bakeCanvasToCanvasSprite,
   bakeCanvasToImageSprite,
   destroyWxCanvasBakeState,
   invalidateWxCanvasBake,
+  isWxCanvasBakeBusy,
+  runWxCanvasBakeSync,
   withWxCanvasBakeLock,
   type WxCanvasBakeState,
 } from '@/wx/wx-canvas-bake'
@@ -107,9 +110,57 @@ export class WxGameModalCanvasLayer extends Sprite {
 
     if (key !== this.cacheKey) {
       this.cacheKey = key
+      if (animated && payload.kind === 'complete' && isWxMiniGame()) {
+        return this.bakeCompleteAnimatedSync(screenW, screenH, payload, animT)
+      }
       this.pending = { screenW, screenH, payload, animT }
       void this.ensureBaked()
     }
+    return this.lastHits
+  }
+
+  /** 通关动效：CanvasSource 同步路径，避免 toDataURL 逐帧编解码 */
+  private bakeCompleteAnimatedSync(
+    screenW: number,
+    screenH: number,
+    payload: CompletePayload,
+    animT: number,
+  ): GameModalHitRects | null {
+    if (isWxCanvasBakeBusy()) return this.lastHits
+
+    const ok = runWxCanvasBakeSync(() => {
+      const dpr = Math.min(getPlatform().getDevicePixelRatio(), 2)
+      const pixelW = Math.max(1, Math.ceil(screenW * dpr))
+      const pixelH = Math.max(1, Math.ceil(screenH * dpr))
+      const canvas = getWxSharedOffscreenCanvas()
+      if (canvas.width !== pixelW || canvas.height !== pixelH) {
+        canvas.width = pixelW
+        canvas.height = pixelH
+      }
+
+      const ctx = getWxCanvas2dContext(canvas)
+      if (!ctx) return
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, screenW, screenH)
+
+      const { hits } = drawCompleteVisual(
+        ctx,
+        screenW,
+        screenH,
+        payload.levelLabel,
+        payload.moves,
+        payload.winStreak,
+        animT,
+      )
+      this.lastHits = hits
+
+      bakeCanvasToCanvasSprite(this, this.bakeState, canvas)
+      this.width = screenW
+      this.height = screenH
+    })
+
+    if (ok) this.onTextureReady?.()
     return this.lastHits
   }
 

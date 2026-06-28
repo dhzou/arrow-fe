@@ -1,13 +1,14 @@
 import { defineConfig } from 'vite'
 import { fileURLToPath, URL } from 'node:url'
 import { wxGetContextChunkPatch } from './src/wx/vite-plugin-wx-getcontext-chunk'
+import { wxLevelsStubPlugin } from './src/wx/vite-plugin-wx-levels-stub'
 
 const pixi = (path: string) =>
   fileURLToPath(new URL(`./node_modules/pixi.js/${path}`, import.meta.url))
 
 /** 微信小游戏构建：输出 minigame/game.js（IIFE 单文件，勿用 CJS） */
 export default defineConfig({
-  plugins: [wxGetContextChunkPatch()],
+  plugins: [wxGetContextChunkPatch(), wxLevelsStubPlugin()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

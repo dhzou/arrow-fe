@@ -3,11 +3,14 @@ import {
   drawTutorialVisual,
   type TutorialHitRects,
 } from '@/canvas-home/tutorial-visual-draw'
-import { getPlatform } from '@/platform'
+import { getPlatform, isWxMiniGame } from '@/platform'
 import {
+  bakeCanvasToCanvasSprite,
   bakeCanvasToImageSprite,
   destroyWxCanvasBakeState,
   invalidateWxCanvasBake,
+  isWxCanvasBakeBusy,
+  runWxCanvasBakeSync,
   type WxCanvasBakeState,
 } from '@/wx/wx-canvas-bake'
 import { getWxSharedOffscreenCanvas, getWxCanvas2dContext } from '@/wx/canvas'
@@ -81,9 +84,49 @@ export class WxTutorialCanvasLayer extends Sprite {
     const key = animated ? `${base}|f${wxHomeAnimFrame(t)}` : base
     if (key !== this.cacheKey) {
       this.cacheKey = key
+      if (animated && isWxMiniGame()) {
+        return this.bakeAnimatedSync(screenW, screenH, safeBottom, step, t)
+      }
       this.pending = { screenW, screenH, safeBottom, step, t }
       void this.ensureBaked()
     }
+    return this.lastHits
+  }
+
+  private bakeAnimatedSync(
+    screenW: number,
+    screenH: number,
+    safeBottom: number,
+    step: number,
+    t: number,
+  ): TutorialHitRects | null {
+    if (isWxCanvasBakeBusy()) return this.lastHits
+
+    const ok = runWxCanvasBakeSync(() => {
+      const dpr = Math.min(getPlatform().getDevicePixelRatio(), 2)
+      const pixelW = Math.max(1, Math.ceil(screenW * dpr))
+      const pixelH = Math.max(1, Math.ceil(screenH * dpr))
+      const canvas = getWxSharedOffscreenCanvas()
+      if (canvas.width !== pixelW || canvas.height !== pixelH) {
+        canvas.width = pixelW
+        canvas.height = pixelH
+      }
+
+      const ctx = getWxCanvas2dContext(canvas)
+      if (!ctx) return
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, screenW, screenH)
+
+      const { hits } = drawTutorialVisual(ctx, screenW, screenH, safeBottom, step, t)
+      this.lastHits = hits
+
+      bakeCanvasToCanvasSprite(this, this.bakeState, canvas)
+      this.width = screenW
+      this.height = screenH
+    })
+
+    if (ok) this.onTextureReady?.()
     return this.lastHits
   }
 

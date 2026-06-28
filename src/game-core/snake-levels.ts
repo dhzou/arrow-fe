@@ -1,7 +1,8 @@
 import type { SnakeLevelData } from './snake-types'
 import { centerLevelInGrid, pathStyleGridSize } from './snake-level-density'
-import corePack from '../data/core-snake-levels.json'
+import corePackImport from '../data/core-snake-levels.json'
 import { CORE_LEVEL_COUNT, isCompactPathLevel } from './snake-difficulty'
+import { isWxMiniGame } from '@/platform'
 import {
   createLevelVariant,
   LEVEL_VARIANT_BASE,
@@ -14,14 +15,60 @@ interface CorePackFile {
   levels: SnakeLevelData[]
 }
 
-const core = corePack as CorePackFile
+let core: CorePackFile | null = null
+let coreLoadPromise: Promise<void> | null = null
 const generatedCache = new Map<number, SnakeLevelData>()
 
-function resolveCoreLevelRaw(levelNumber: number): SnakeLevelData {
-  if (levelNumber < 1 || levelNumber > core.levels.length) {
-    throw new Error(`关卡 ${levelNumber} 不存在，请运行 npm run bake:snake-levels（共 ${core.levels.length} 关预制）`)
+function loadCoreFromWxFile(): Promise<CorePackFile> {
+  return new Promise((resolve, reject) => {
+    wx.getFileSystemManager().readFile({
+      filePath: 'data/core-snake-levels.json',
+      encoding: 'utf8',
+      success: (res) => {
+        try {
+          resolve(JSON.parse(res.data as string) as CorePackFile)
+        } catch (err) {
+          reject(err)
+        }
+      },
+      fail: (err) => reject(new Error(`读取关卡数据失败: ${JSON.stringify(err)}`)),
+    })
+  })
+}
+
+/** 微信端启动后预加载关卡 JSON（bundle 内为 stub，真实数据在 minigame/data/） */
+export async function ensureSnakeLevelsLoaded(): Promise<void> {
+  if (core && core.levels.length > 0) return
+  if (coreLoadPromise) return coreLoadPromise
+  coreLoadPromise = (async () => {
+    if (isWxMiniGame()) {
+      core = await loadCoreFromWxFile()
+    } else if (!core) {
+      core = corePackImport as CorePackFile
+    }
+  })()
+  return coreLoadPromise
+}
+
+function getCore(): CorePackFile {
+  if (isWxMiniGame()) {
+    if (!core || core.levels.length === 0) {
+      throw new Error('关卡数据尚未加载，请先 await ensureSnakeLevelsLoaded()')
+    }
+    return core
   }
-  const level = core.levels[levelNumber - 1]
+  if (!core) {
+    core = corePackImport as CorePackFile
+  }
+  return core
+}
+
+function resolveCoreLevelRaw(levelNumber: number): SnakeLevelData {
+  const pack = getCore()
+  if (levelNumber < 1 || levelNumber > pack.levels.length) {
+    throw new Error(`关卡 ${levelNumber} 不存在，请运行 npm run bake:snake-levels（共 ${pack.levels.length} 关预制）`)
+  }
+  const level = pack.levels[levelNumber - 1]
   if (!level) {
     throw new Error(`关卡 ${levelNumber} 数据缺失`)
   }
@@ -90,6 +137,7 @@ export function getSnakeLevelOrVariant(levelNumber: number): SnakeLevelData {
 }
 
 export async function getSnakeLevelOrVariantAsync(levelNumber: number): Promise<SnakeLevelData> {
+  await ensureSnakeLevelsLoaded()
   return resolveLevel(levelNumber)
 }
 

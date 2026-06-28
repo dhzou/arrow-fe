@@ -147,7 +147,18 @@ export class GameController {
     }
   }
 
+  private dismissResultOverlay(): void {
+    if (this.overlay !== 'complete' && this.overlay !== 'failed') return
+    this.overlay = 'none'
+    this.failReason = null
+    this.inputLocked = true
+    this.renderer.setInputLocked(true)
+    this.hooks.onOverlayChange?.('none')
+    this.hooks.onHudSync?.()
+  }
+
   private async loadLevelNumber(level: number): Promise<void> {
+    this.dismissResultOverlay()
     this.levelLoading = true
     this.inputLocked = true
     this.renderer.setInputLocked(true)
@@ -219,6 +230,7 @@ export class GameController {
       this.renderer.animateBlocked(snapshot, target, current.width, current.height, () => {
         this.syncHudStats()
         if (result.lifeLost && current.isFailed) {
+          if (this.overlay === 'complete') return
           this.failReason = 'lives'
           this.overlay = 'failed'
           this.inputLocked = true
@@ -249,9 +261,9 @@ export class GameController {
 
   onLevelComplete(): void {
     if (!this.session || this.overlay === 'complete') return
+    this.failReason = null
     playSound('complete')
     this.levelTimer.stop()
-    this.failReason = null
     this.overlay = 'complete'
     this.hooks.onOverlayChange?.('complete')
     this.inputLocked = false
@@ -627,6 +639,7 @@ export class GameController {
 
   handleNext(): void {
     playSound('tap')
+    this.dismissResultOverlay()
     void this.startSession((this.session?.level.levelNumber ?? 1) + 1)
   }
 
@@ -634,12 +647,8 @@ export class GameController {
     playSound('tap')
     if (this.overlay === 'pause') {
       this.closePause()
-    } else if (this.overlay === 'failed' || this.overlay === 'complete') {
-      this.overlay = 'none'
-      this.inputLocked = true
-      this.renderer.setInputLocked(true)
-      this.hooks.onOverlayChange?.('none')
-      this.hooks.onHudSync?.()
+    } else {
+      this.dismissResultOverlay()
     }
     void this.startSession(this.session?.level.levelNumber)
   }

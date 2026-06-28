@@ -158,6 +158,8 @@ export class WxHudOverlay extends Container {
   private lastBottomSig = ''
   private lastShareToastSig = ''
   private lastTimerSec = -1
+  /** 跟踪通关/失败弹窗切换，避免旧 Canvas 纹理在状态变化后闪现 */
+  private lastResultModal: 'none' | 'complete' | 'failed' = 'none'
   private zoomPathStyle = false
   private zoomChromeSplit = false
   private pressedAction: WxHudAction | null = null
@@ -221,7 +223,7 @@ export class WxHudOverlay extends Container {
   /** 通关弹窗动效 — 由 WxGameApp 在 complete 显示时每帧调用 */
   tickCompleteDecor(t: number): void {
     const s = this.state
-    if (!s || s.overlay !== 'complete') return
+    if (!s || s.loading || s.overlay !== 'complete') return
     const hits = this.gameModalCanvasLayer.refreshCompleteAnimated(
       this.screenW,
       this.screenH,
@@ -284,6 +286,7 @@ export class WxHudOverlay extends Container {
   update(state: WxHudState): boolean {
     const prevSec = this.state ? Math.floor(this.state.timeRemainingMs / 1000) : -1
     this.state = state
+    this.syncResultModalTexture(state)
     const nextSec = Math.floor(state.timeRemainingMs / 1000)
     const timerTick = prevSec !== nextSec
 
@@ -341,6 +344,8 @@ export class WxHudOverlay extends Container {
   hitTest(x: number, y: number): WxHudAction {
     if (!this.state) return 'none'
     const s = this.state
+
+    if (s.loading) return 'none'
 
     if (s.overlay === 'complete') {
       if (inRect(x, y, this.modalPrimaryRect)) return 'modal-next'
@@ -495,6 +500,24 @@ export class WxHudOverlay extends Container {
     return this.zoomValueAtX(x, true)
   }
 
+  /** 通关/失败弹窗切换时清空烘焙纹理，防止分享续命后仍短暂显示失败 UI */
+  private syncResultModalTexture(s: WxHudState): void {
+    const next: 'none' | 'complete' | 'failed' =
+      s.loading || s.overlay === 'pause' || s.overlay === 'tutorial'
+        ? 'none'
+        : s.overlay === 'complete'
+          ? 'complete'
+          : s.overlay === 'failed'
+            ? 'failed'
+            : 'none'
+    if (next === this.lastResultModal) return
+    const prev = this.lastResultModal
+    this.lastResultModal = next
+    if (prev !== 'none' || next !== 'none') {
+      this.gameModalCanvasLayer.invalidateBakedTexture()
+    }
+  }
+
   private redraw(): boolean {
     this.clearTransientTexts()
     this.modalContent.clear()
@@ -514,7 +537,8 @@ export class WxHudOverlay extends Container {
 
     const s = this.state
     const modalOverlay =
-      s.overlay === 'complete' || s.overlay === 'failed' || s.overlay === 'pause'
+      !s.loading &&
+      (s.overlay === 'complete' || s.overlay === 'failed' || s.overlay === 'pause')
 
     if (s.loadError || modalOverlay || s.overlay === 'tutorial') {
       this.redrawFull(s, modalOverlay)
@@ -601,7 +625,7 @@ export class WxHudOverlay extends Container {
       this.errorText.y = this.screenH * 0.45
     }
 
-    if (s.overlay === 'complete') {
+    if (s.overlay === 'complete' && !s.loading) {
       const hits = this.gameModalCanvasLayer.refresh(this.screenW, this.screenH, {
         kind: 'complete',
         levelLabel: s.levelLabel,
@@ -613,7 +637,7 @@ export class WxHudOverlay extends Container {
         this.modalSecondaryRect = hits.secondary
         this.modalTertiaryRect = hits.tertiary ?? { x: 0, y: 0, w: 0, h: 0 }
       }
-    } else if (s.overlay === 'failed') {
+    } else if (s.overlay === 'failed' && !s.loading) {
       const reason = s.failReason === 'time' ? 'time' : 'lives'
       const copy = FAIL_COPY[reason]
       const hits = this.gameModalCanvasLayer.refresh(this.screenW, this.screenH, {

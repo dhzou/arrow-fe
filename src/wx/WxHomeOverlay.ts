@@ -106,7 +106,19 @@ export class WxHomeOverlay extends Container {
   }
 
   async loadAssets(_app: Application): Promise<void> {
-    await this.bakeAllTexts()
+    const critical = [this.startLabel, this.titleText, this.levelNumText]
+    for (const node of critical) {
+      await node.ensureBaked()
+    }
+    void this.bakeRemainingTexts(critical)
+  }
+
+  private async bakeRemainingTexts(skip: WxCanvasText[]): Promise<void> {
+    const skipSet = new Set(skip)
+    for (const node of this.textNodes) {
+      if (skipSet.has(node)) continue
+      await node.ensureBaked()
+    }
   }
 
   async rebakeAllTexts(): Promise<void> {

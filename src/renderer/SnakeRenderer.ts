@@ -127,10 +127,15 @@ export class SnakeRenderer {
   private boardGestureSuppressTimer: number | null = null
   /** 缩放变化时同步 UI（如 Web 滑条） */
   onZoomChange: ((zoom: number) => void) | null = null
+  private renderFlushRaf = 0
   private animating = false
   private cancelAnimation: (() => void) | null = null
-  /** 参考 33333.mp4：匀速逐格滑出，无单独平移/渐隐阶段 */
-  private readonly slideStepMs = 40
+  /** 参考 33333.mp4：匀速逐格滑出，无单独平移/渐隐阶段（微信端略降帧以减轻 Canvas 压力） */
+  private slideStepIntervalMs(): number {
+    return isWxMiniGame() ? 48 : 40
+  }
+  /** 微信滑出动画隔帧重绘网格，减轻大棋盘 scanlines 开销 */
+  private slideGridFrameCounter = 0
   /** 并行动画：多条路径可同时滑出 */
   private moveSlides = new Map<
     string,
@@ -470,6 +475,10 @@ export class SnakeRenderer {
       getPlatform().clearTimeout(this.boardGestureSuppressTimer)
       this.boardGestureSuppressTimer = null
     }
+    if (this.renderFlushRaf) {
+      this.cancelFrame(this.renderFlushRaf)
+      this.renderFlushRaf = 0
+    }
     this.app?.destroy(true, { children: true })
     this.app = null
     this.board = null
@@ -488,7 +497,7 @@ export class SnakeRenderer {
   }
 
   forceRender(): void {
-    this.app?.render()
+    this.scheduleAppRender()
   }
 
   /** 从后台恢复时重启 ticker 并重绘一帧 */
@@ -582,14 +591,14 @@ export class SnakeRenderer {
     this.blockedHighlightId = null
   }
 
-  setZoom(zoom: number): void {
+  setZoom(zoom: number, render = true): void {
     const prev = this.zoom
     this.zoom = Math.max(1, Math.min(1.5, zoom))
     if (this.zoom <= 1 || prev <= 1) {
       this.resetPan()
     }
     this.positionBoard()
-    this.commitRender()
+    if (render) this.commitRender()
     this.onZoomChange?.(this.zoom)
   }
 
@@ -921,7 +930,7 @@ export class SnakeRenderer {
     this.lastSnakes = staticSnakes
 
     const segmentCount = Math.max(0, frames.length - 1)
-    const totalMs = segmentCount * this.slideStepMs
+    const totalMs = segmentCount * this.slideStepIntervalMs()
 
     if (segmentCount <= 0 || frames[0]?.cells.length === 0) {
       onComplete()
@@ -1003,7 +1012,14 @@ export class SnakeRenderer {
 
     if (this.gridWidth > 0 && this.gridHeight > 0) {
       const moving = this.buildSlideOccupancySnakes(now)
-      this.drawBoardGrid(this.gridWidth, this.gridHeight, [...this.lastSnakes, ...moving])
+      const skipGrid =
+        isWxMiniGame() &&
+        this.moveSlides.size > 0 &&
+        this.revealingGridCells.size === 0 &&
+        this.slideGridFrameCounter++ % 2 === 1
+      if (!skipGrid) {
+        this.drawBoardGrid(this.gridWidth, this.gridHeight, [...this.lastSnakes, ...moving])
+      }
     }
 
     this.commitRender()
@@ -1353,7 +1369,7 @@ export class SnakeRenderer {
 
     const slideFrames = frames
     const segmentCount = Math.max(0, slideFrames.length - 1)
-    const totalMs = segmentCount * this.slideStepMs
+    const totalMs = segmentCount * this.slideStepIntervalMs()
 
     this.refreshAssistGridForSlide(
       staticSnakes,
@@ -1511,7 +1527,7 @@ export class SnakeRenderer {
       const start = performance.now()
       const tick = (now: number) => {
         if (cancelled) return
-        const t = this.easeStep(Math.min(1, (now - start) / this.slideStepMs))
+        const t = this.easeStep(Math.min(1, (now - start) / this.slideStepIntervalMs()))
         this.paintSlideStep(from, to, t, style, 'reverse')
         this.refreshAssistGridForSlide(staticSnakes, from, to, t, 'reverse', gridWidth, gridHeight)
         this.commitRender()
@@ -1546,7 +1562,15 @@ export class SnakeRenderer {
   }
 
   private commitRender(): void {
-    this.app?.render()
+    this.scheduleAppRender()
+  }
+
+  private scheduleAppRender(): void {
+    if (!this.app || this.renderFlushRaf) return
+    this.renderFlushRaf = this.scheduleFrame(() => {
+      this.renderFlushRaf = 0
+      this.app?.render()
+    })
   }
 
   private resetActiveOffset(): void {
