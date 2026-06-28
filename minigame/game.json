@@ -7,5 +7,21 @@
     "connectSocket": 10000,
     "uploadFile": 10000,
     "downloadFile": 10000
-  }
+  },
+  "plugins": {
+    "MinigameLoading": {
+      "version": "latest",
+      "provider": "wxbd990766293b9dc4",
+      "contexts": [{ "type": "isolatedContext" }]
+    }
+  },
+  "subpackages": [
+    {
+      "name": "gamecore",
+      "root": "subpackage/"
+    }
+  ],
+  "parallelPreloadSubpackages": [
+    { "name": "gamecore" }
+  ]
 }

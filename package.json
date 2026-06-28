@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:wx": "vite build --config vite.config.wx.ts && node scripts/copy-wx-assets.mjs",
+    "build:wx": "node scripts/generate-wx-cover.mjs && vite build --config vite.config.wx.ts && vite build --config vite.config.wx-sub.ts && node scripts/copy-wx-assets.mjs",
     "build:mp": "vite build --config vite.config.mp.ts",
     "preview": "vite preview",
     "test": "vitest run",

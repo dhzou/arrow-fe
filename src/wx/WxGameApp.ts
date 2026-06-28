@@ -1,4 +1,4 @@
-import { GameController } from '@/game/GameController'
+import type { GameController } from '@/game/GameController'
 import { ProgressBridge } from '@/game/ProgressBridge'
 import {
   BOARD_ZOOM_DEFAULT,
@@ -16,10 +16,12 @@ import { playSound, resumeAudio } from '@/utils/sound'
 import { MINIGAME_STORE } from '@/game/game-ui-content'
 import { WX_HOME_ANIM_MS, WX_HOME_ANIM_SPEED, wxHomeAnimFrame, wxHomePreviewFrame } from '@/wx/wx-home-anim'
 import { WxHomeOverlay, type WxHomeAction } from './WxHomeOverlay'
-import { WxHudOverlay, type WxHudAction, type WxHudState } from './WxHudOverlay'
+import type { WxHudAction, WxHudState, WxHudOverlay } from './WxHudOverlay'
 import { WxLeaderboardOverlay, type WxLeaderboardAction } from './WxLeaderboardOverlay'
 import { WxSettingsOverlay, type WxSettingsAction } from './WxSettingsOverlay'
 import { WxSignInOverlay, type WxSignInAction } from './WxSignInOverlay'
+import { loadWxGameCore } from './wx-game-core-loader'
+import { hideWxLoadingCover } from './wx-loading-cover'
 import {
   fetchLeaderboard,
   initWxCloud,
@@ -38,8 +40,10 @@ export class WxGameApp {
   private readonly settings = new WxSettingsOverlay()
   private readonly leaderboard = new WxLeaderboardOverlay()
   private readonly signIn = new WxSignInOverlay()
-  private readonly hud = new WxHudOverlay()
+  private hud: WxHudOverlay | null = null
   private controller: GameController | null = null
+  /** 后台预加载对局分包（GameController + HUD） */
+  private gameCoreReady: Promise<void> | null = null
   private unsubTouch: (() => void) | null = null
   private unsubTouchStart: (() => void) | null = null
   private unsubTouchMove: (() => void) | null = null
@@ -87,12 +91,10 @@ export class WxGameApp {
       title: `${MINIGAME_STORE.shareTitle} - ${MINIGAME_STORE.shareText}`,
       resolveShareContent: () => this.resolveShareContent(),
     })
-    initWxCloud()
 
     const metrics = this.platform.getScreenMetrics()
     await this.renderer.init(null, metrics.width, metrics.height)
 
-    this.renderer.addOverlayLayer(this.hud)
     this.renderer.addOverlayLayer(this.home)
     this.renderer.addOverlayLayer(this.settings)
     this.renderer.addOverlayLayer(this.leaderboard)
@@ -100,22 +102,11 @@ export class WxGameApp {
 
     this.layoutOverlays(metrics)
 
-    const pixiApp = this.renderer.getPixiApp()
-    if (pixiApp) {
-      await this.home.loadAssets(pixiApp)
-    }
-    this.homeTextsReady = true
-    void ensureSnakeLevelsLoaded()
-
     this.home.bindCanvasTextureReady(() => {
       if (this.screen === 'home' && this.homeDecorFrame >= 0) return
       this.renderer.forceRender()
     })
     this.settings.bindCanvasTextureReady(() => this.renderer.forceRender())
-    this.hud.bindTutorialTextureReady(() => this.renderer.forceRender())
-    this.hud.bindPauseTextureReady(() => this.renderer.forceRender())
-    this.hud.bindHudTextReady(() => this.renderer.forceRender())
-    this.hud.bindGameModalTextureReady(() => this.renderer.forceRender())
 
     const onPressVisualChange = (): void => {
       this.renderer.forceRender()
@@ -125,22 +116,71 @@ export class WxGameApp {
     this.signIn.onPressVisualChange = onPressVisualChange
     this.leaderboard.onPressVisualChange = onPressVisualChange
     this.leaderboard.onContentReady = onPressVisualChange
-    this.hud.onPressVisualChange = onPressVisualChange
 
     this.applyScreen()
+    this.renderer.forceRender()
+    hideWxLoadingCover()
 
-    this.platform.requestAnimationFrame(() => this.ensureController())
+    void this.finishHomeBoot()
+    void this.preloadGameCore()
+    void ensureSnakeLevelsLoaded()
+
     this.installWxTouchGestures()
     this.unsubResize = this.platform.onWindowResize(() => void this.onResize())
 
     this.installAppLifecycle()
     this.syncHome()
-    void this.syncRankingProgress()
+
+    void Promise.resolve().then(() => {
+      initWxCloud()
+      void this.syncRankingProgress()
+    })
   }
 
-  private ensureController(): GameController {
+  /** 首帧上屏后再烘焙首页文字，避免阻塞封面→首屏 */
+  private async finishHomeBoot(): Promise<void> {
+    const pixiApp = this.renderer.getPixiApp()
+    if (pixiApp) {
+      await this.home.loadAssets(pixiApp)
+    }
+    this.homeTextsReady = true
+    this.syncHome()
+    this.applyScreen()
+  }
+
+  private preloadGameCore(): Promise<void> {
+    if (!this.gameCoreReady) {
+      this.gameCoreReady = this.ensureController().then(() => undefined)
+    }
+    return this.gameCoreReady
+  }
+
+  private bindHudCallbacks(): void {
+    if (!this.hud) return
+    this.hud.bindTutorialTextureReady(() => this.renderer.forceRender())
+    this.hud.bindPauseTextureReady(() => this.renderer.forceRender())
+    this.hud.bindHudTextReady(() => this.renderer.forceRender())
+    this.hud.bindGameModalTextureReady(() => this.renderer.forceRender())
+    this.hud.onPressVisualChange = () => this.renderer.forceRender()
+  }
+
+  private async ensureHud(): Promise<WxHudOverlay> {
+    if (this.hud) return this.hud
+    const core = await loadWxGameCore()
+    this.hud = new core.WxHudOverlay()
+    this.renderer.addOverlayLayer(this.hud)
+    const metrics = this.platform.getScreenMetrics()
+    this.hud.layout(metrics.width, metrics.height, metrics.safeAreaTop, metrics.safeAreaBottom)
+    this.hud.visible = this.screen === 'game'
+    this.bindHudCallbacks()
+    return this.hud
+  }
+
+  private async ensureController(): Promise<GameController> {
     if (this.controller) return this.controller
-    this.controller = new GameController(this.renderer, this.progress, {
+    const core = await loadWxGameCore()
+    await this.ensureHud()
+    this.controller = new core.GameController(this.renderer, this.progress, {
       onHudSync: () => this.syncHud(),
       onShareHintGranted: (message) => {
         try {
@@ -165,7 +205,9 @@ export class WxGameApp {
       },
       captureShareImage: () => this.captureBoardShareImage(),
     })
-    this.renderer.onCellClick((x, y) => void this.ensureController().handleTap(x, y))
+    this.renderer.onCellClick((x, y) => {
+      void this.ensureController().then((c) => c.handleTap(x, y))
+    })
     return this.controller
   }
 
@@ -180,7 +222,7 @@ export class WxGameApp {
     this.settings.layout(metrics.width, metrics.height, metrics.safeAreaTop)
     this.leaderboard.layout(metrics.width, metrics.height, metrics.safeAreaTop, metrics.safeAreaBottom)
     this.signIn.layout(metrics.width, metrics.height, metrics.safeAreaTop)
-    this.hud.layout(metrics.width, metrics.height, metrics.safeAreaTop, metrics.safeAreaBottom)
+    this.hud?.layout(metrics.width, metrics.height, metrics.safeAreaTop, metrics.safeAreaBottom)
   }
 
   private async relayoutHomeTexts(metrics: ReturnType<typeof wxPlatform.getScreenMetrics>): void {
@@ -199,7 +241,7 @@ export class WxGameApp {
     this.settings.visible = this.settingsOpen && (this.screen === 'home' || this.screen === 'game')
     this.leaderboard.visible = this.screen === 'leaderboard'
     this.signIn.visible = this.signInOpen && this.screen === 'home'
-    this.hud.visible = this.screen === 'game'
+    if (this.hud) this.hud.visible = this.screen === 'game'
     this.renderer.setGameplayVisible(this.screen === 'game')
     this.clearAllButtonPress()
     if (this.screen === 'home' && this.homeTextsReady) {
@@ -280,7 +322,7 @@ export class WxGameApp {
 
     this.home.recoverAfterBackground()
     this.settings.recoverAfterBackground()
-    this.hud.recoverAfterBackground()
+    this.hud?.recoverAfterBackground()
 
     if (this.screen === 'game' && this.controller) {
       const c = this.controller
@@ -310,7 +352,9 @@ export class WxGameApp {
   }
 
   private resetOverlayAlphas(): void {
-    for (const layer of [this.home, this.settings, this.leaderboard, this.signIn, this.hud]) {
+    for (const layer of [this.home, this.settings, this.leaderboard, this.signIn, this.hud].filter(
+      Boolean,
+    )) {
       layer.alpha = 1
     }
   }
@@ -396,6 +440,7 @@ export class WxGameApp {
       shareHintToast: c.shareHintToast,
       boardThemeIndex: this.progress.boardThemeIndex,
     }
+    if (!this.hud) return
     if (this.hud.update(state)) {
       this.renderer.forceRender()
     }
@@ -433,7 +478,7 @@ export class WxGameApp {
       if (now - this.completeAnimLastMs < WX_HOME_ANIM_MS) return
       this.completeAnimLastMs = now
       this.completeClock += WX_HOME_ANIM_MS
-      this.hud.tickCompleteDecor(this.completeClock / 1000)
+      this.hud?.tickCompleteDecor(this.completeClock / 1000)
       this.renderer.forceRender()
     }
     this.completeDecorRaf = this.platform.requestAnimationFrame(tick)
@@ -467,7 +512,7 @@ export class WxGameApp {
       if (now - this.tutorialAnimLastMs < WX_HOME_ANIM_MS) return
       this.tutorialAnimLastMs = now
       this.tutorialClock += WX_HOME_ANIM_MS
-      this.hud.tickTutorialDecor(this.tutorialClock / 1000)
+      this.hud?.tickTutorialDecor(this.tutorialClock / 1000)
       this.renderer.forceRender()
     }
     this.tutorialDecorRaf = this.platform.requestAnimationFrame(tick)
@@ -488,20 +533,25 @@ export class WxGameApp {
     this.renderer.setBoardThemeIndex(this.progress.boardThemeIndex)
 
     // 从首页进入始终重新开局，避免沿用上次的半成品关卡
-    this.ensureController().devPlay = false
+    await this.ensureController()
+    const c = this.controller
+    if (!c) return
+    c.devPlay = false
     await ensureSnakeLevelsLoaded()
-    await this.ensureController().startSession(levelNumber)
+    await c.startSession(levelNumber)
     this.syncHud()
-    this.hud.updateZoom(this.boardZoom)
+    this.hud?.updateZoom(this.boardZoom)
     this.renderer.setZoom(this.boardZoom)
   }
 
   private goHome(): void {
     playSound('tap')
-    const c = this.ensureController()
-    c.devPlay = false
-    c.closePause()
-    c.stopLevelTimer()
+    const c = this.controller
+    if (c) {
+      c.devPlay = false
+      c.closePause()
+      c.stopLevelTimer()
+    }
     this.settingsOpen = false
     this.screen = 'home'
     this.applyScreen()
@@ -512,7 +562,7 @@ export class WxGameApp {
     playSound('tap')
     this.settingsOpen = true
     if (this.screen === 'game') {
-      this.ensureController().pauseForSettings()
+      this.controller?.pauseForSettings()
     }
     this.syncSettings()
     this.applyScreen()
@@ -522,7 +572,7 @@ export class WxGameApp {
   private closeSettings(): void {
     this.settingsOpen = false
     if (this.screen === 'game') {
-      this.ensureController().resumeAfterSettings()
+      this.controller?.resumeAfterSettings()
     }
     this.applyScreen()
     this.renderer.forceRender()
@@ -631,7 +681,7 @@ export class WxGameApp {
 
   private pinchTouchesOnBoard(touches: WechatMinigame.Touch[]): boolean {
     for (const t of touches) {
-      if (this.hud.isTouchOnChrome(t.clientX, t.clientY)) return false
+      if (this.hud?.isTouchOnChrome(t.clientX, t.clientY)) return false
     }
     return true
   }
@@ -642,7 +692,7 @@ export class WxGameApp {
     const next = Math.min(BOARD_ZOOM_MAX, Math.max(BOARD_ZOOM_MIN, raw))
     if (next === this.boardZoom) return
     this.boardZoom = next
-    this.hud.updateZoom(next)
+    this.hud?.updateZoom(next)
     this.renderer.setZoom(next, false)
     if (this.boardPinchRenderRaf !== null) return
     this.boardPinchRenderRaf = this.platform.requestAnimationFrame(() => {
@@ -678,7 +728,7 @@ export class WxGameApp {
       this.updateButtonPress(x, y)
       return
     }
-    if (this.screen !== 'game') return
+    if (this.screen !== 'game' || !this.hud) return
 
     if (this.settingsOpen) {
       const themeIdx = this.settings.hitThemeIndex(x, y)
@@ -766,6 +816,7 @@ export class WxGameApp {
       return
     }
     if (this.screen === 'game') {
+      if (!this.hud) return
       if (this.settingsOpen) {
         const themeIdx = this.settings.hitThemeIndex(x, y)
         if (themeIdx !== null) {
@@ -784,11 +835,11 @@ export class WxGameApp {
     this.settings.clearPress()
     this.signIn.clearPress()
     this.leaderboard.clearPress()
-    this.hud.clearPress()
+    this.hud?.clearPress()
   }
 
   private applyZoomScrub(x: number, snap: boolean): void {
-    const val = this.hud.zoomValueAtX(x, snap)
+    const val = this.hud?.zoomValueAtX(x, snap)
     if (val === null) return
     if (snap) {
       this.flushZoomScrub(val)
@@ -819,7 +870,7 @@ export class WxGameApp {
       : Math.min(BOARD_ZOOM_MAX, Math.max(BOARD_ZOOM_MIN, value))
     if (raw === this.boardZoom) return
     this.boardZoom = raw
-    this.hud.updateZoom(raw)
+    this.hud?.updateZoom(raw)
     this.renderer.setZoom(raw)
   }
 
@@ -855,6 +906,8 @@ export class WxGameApp {
       this.handleSettingsAction(this.settings.hitTest(x, y))
       return
     }
+
+    if (!this.hud) return
 
     const zoomVal = this.hud.zoomValueAtTouch(x, y)
     if (zoomVal !== null) {
@@ -979,12 +1032,15 @@ export class WxGameApp {
     this.home.syncTheme()
     this.syncSettings()
     if (this.screen === 'game' && this.controller?.session) {
-      this.ensureController().renderSession()
+      void this.ensureController().then((c) => c.renderSession())
     }
   }
 
   private handleHudAction(action: WxHudAction): void {
-    const c = this.ensureController()
+    void this.ensureController().then((c) => this.dispatchHudAction(c, action))
+  }
+
+  private dispatchHudAction(c: GameController, action: WxHudAction): void {
     switch (action) {
       case 'settings':
         this.openSettings()
@@ -1075,6 +1131,6 @@ export class WxGameApp {
     this.settings.destroy()
     this.leaderboard.destroy()
     this.signIn.destroy()
-    this.hud.destroy()
+    this.hud?.destroy()
   }
 }
