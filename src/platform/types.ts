@@ -30,6 +30,13 @@ export interface ShareForHintPayload {
   cancelText: string
   /** 奖励类型，微信端用于定向分享与云函数计次 */
   rewardType?: ShareRewardType
+  /** 分享前截取棋盘等区域，返回微信临时文件路径 */
+  getShareImage?: () => Promise<string | undefined>
+}
+
+export interface ShareMenuContent {
+  title: string
+  imageUrl?: string
 }
 
 export interface PlatformAPI {
@@ -45,7 +52,7 @@ export interface PlatformAPI {
   onTouchMove?(handler: (x: number, y: number) => void): () => void
   onTouchEnd(handler: (x: number, y: number) => void): () => void
   onWindowResize(handler: () => void): () => void
-  showShareMenu?(opts: { title: string }): void
+  showShareMenu?(opts: { title: string; resolveShareContent?: () => ShareMenuContent }): void
   /** 发起分享以换取奖励 */
   shareForHint?(payload: ShareForHintPayload): Promise<ShareForHintOutcome>
   /** 路径被挡时的短震动 */

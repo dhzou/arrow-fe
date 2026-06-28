@@ -7,16 +7,16 @@ import {
 } from '@/game-core/level-timer'
 
 describe('level-timer', () => {
-  it('formats full level time as 3:00', () => {
-    expect(formatLevelTime(LEVEL_TIME_MS)).toBe('3:00')
+  it('formats full level time as 2:30', () => {
+    expect(formatLevelTime(LEVEL_TIME_MS)).toBe('2:30')
   })
 
-  it('uses 3:00 for all levels', () => {
+  it('uses 2:30 for all levels', () => {
     expect(levelTimeLimitMs(1)).toBe(LEVEL_TIME_MS)
     expect(levelTimeLimitMs(10)).toBe(LEVEL_TIME_MS)
-    expect(formatLevelTime(levelTimeLimitMs(5))).toBe('3:00')
+    expect(formatLevelTime(levelTimeLimitMs(5))).toBe('2:30')
     expect(levelTimeLimitMs(30)).toBe(LEVEL_TIME_MS)
-    expect(formatLevelTime(levelTimeLimitMs(30))).toBe('3:00')
+    expect(formatLevelTime(levelTimeLimitMs(30))).toBe('2:30')
   })
 
   it('reset accepts custom limit', () => {

@@ -189,9 +189,12 @@ export const wxPlatform: PlatformAPI = {
       withShareTicket: true,
       menus: ['shareAppMessage', 'shareTimeline'],
     })
-    requireWx().onShareAppMessage(() => ({
-      title: opts.title,
-    }))
+    requireWx().onShareAppMessage(() => {
+      if (opts.resolveShareContent) {
+        return opts.resolveShareContent()
+      }
+      return { title: opts.title }
+    })
   },
   shareForHint: wxShareForHint,
   vibrateBlocked() {

@@ -4,6 +4,7 @@ import { LevelTimer, LEVEL_TIME_MS, levelTimeLimitMs } from '@/game-core/level-t
 import { SnakeSession } from '@/game-core/snake-session'
 import type { SnakeRenderer } from '@/renderer/SnakeRenderer'
 import { getPlatform } from '@/platform'
+import type { ShareForHintPayload } from '@/platform/types'
 import { playSound, resumeAudio } from '@/utils/sound'
 import { triggerBlockedFeedback } from '@/utils/feedback'
 import { SHARE_ASSIST, SHARE_HINT, SHARE_LIFE, SHARE_LIMIT_TOAST, SHARE_TIME, SHARE_TIME_BONUS_MS } from '@/game/game-ui-content'
@@ -20,6 +21,8 @@ export interface GameControllerHooks {
   onLoadingChange?: (loading: boolean) => void
   onShareHintGranted?: (message: string) => void
   onLevelComplete?: (levelNumber: number, newCurrentLevel: number) => void
+  /** 分享前截取棋盘等区域，返回微信临时文件路径 */
+  captureShareImage?: () => Promise<string | undefined>
 }
 
 /** 与 UI 框架无关的核心对局逻辑（Web / 微信共用） */
@@ -45,6 +48,8 @@ export class GameController {
   private shareForTimeInFlight = false
   private shareForLifeInFlight = false
   private shareHintToastTimer: number | null = null
+  /** 进关 / 下一步时递增，动画回调比对以防 stale onLevelComplete */
+  private sessionEpoch = 0
   private readonly levelTimer: LevelTimer
 
   constructor(
@@ -158,6 +163,8 @@ export class GameController {
   }
 
   private async loadLevelNumber(level: number): Promise<void> {
+    this.sessionEpoch++
+    this.renderer.abortPendingMoveAnimations()
     this.dismissResultOverlay()
     this.levelLoading = true
     this.inputLocked = true
@@ -227,7 +234,9 @@ export class GameController {
       this.inputLocked = true
       this.renderer.setInputLocked(true)
       void triggerBlockedFeedback()
+      const moveEpoch = this.sessionEpoch
       this.renderer.animateBlocked(snapshot, target, current.width, current.height, () => {
+        if (this.sessionEpoch !== moveEpoch || this.levelLoading) return
         this.syncHudStats()
         if (result.lifeLost && current.isFailed) {
           if (this.overlay === 'complete') return
@@ -247,7 +256,9 @@ export class GameController {
 
     playSound('move')
     this.levelTimer.pause()
+    const moveEpoch = this.sessionEpoch
     this.renderer.animateMove(target, snapshot, current.width, current.height, () => {
+      if (this.sessionEpoch !== moveEpoch || this.levelLoading) return
       this.syncHudStats()
       if (result.type === 'complete') {
         this.onLevelComplete()
@@ -260,7 +271,7 @@ export class GameController {
   }
 
   onLevelComplete(): void {
-    if (!this.session || this.overlay === 'complete') return
+    if (!this.session || this.overlay === 'complete' || this.levelLoading) return
     this.failReason = null
     playSound('complete')
     this.levelTimer.stop()
@@ -410,7 +421,7 @@ export class GameController {
     this.shareForAssistInFlight = true
     try {
       await resumeAudio()
-      const outcome = await platform.shareForHint(SHARE_ASSIST)
+      const outcome = await platform.shareForHint(this.withShareImage(SHARE_ASSIST))
       if (!this.session || outcome === 'cancelled') return
       if (outcome === 'limited') {
         this.showShareHintToast(SHARE_LIMIT_TOAST)
@@ -477,7 +488,7 @@ export class GameController {
     this.shareForHintInFlight = true
     try {
       await resumeAudio()
-      const outcome = await platform.shareForHint(SHARE_HINT)
+      const outcome = await platform.shareForHint(this.withShareImage(SHARE_HINT))
       if (!this.session || outcome === 'cancelled') return
       if (outcome === 'limited') {
         this.showShareHintToast(SHARE_LIMIT_TOAST)
@@ -535,7 +546,7 @@ export class GameController {
     this.shareForLifeInFlight = true
     try {
       await resumeAudio()
-      const outcome = await platform.shareForHint(SHARE_LIFE)
+      const outcome = await platform.shareForHint(this.withShareImage(SHARE_LIFE))
       if (!this.session || outcome === 'cancelled') return
       if (outcome === 'limited') {
         this.showShareHintToast(SHARE_LIMIT_TOAST)
@@ -569,7 +580,7 @@ export class GameController {
     this.shareForTimeInFlight = true
     try {
       await resumeAudio()
-      const outcome = await platform.shareForHint(SHARE_TIME)
+      const outcome = await platform.shareForHint(this.withShareImage(SHARE_TIME))
       if (!this.session || outcome === 'cancelled') return
       if (outcome === 'limited') {
         this.showShareHintToast(SHARE_LIMIT_TOAST)
@@ -597,6 +608,11 @@ export class GameController {
     const limitMs = levelTimeLimitMs(levelNumber)
     this.levelTimer.reset(limitMs)
     this.timeRemainingMs = limitMs
+  }
+
+  private withShareImage(payload: ShareForHintPayload): ShareForHintPayload {
+    if (!this.hooks.captureShareImage) return payload
+    return { ...payload, getShareImage: this.hooks.captureShareImage }
   }
 
   private showShareHintToast(message: string): void {
@@ -639,6 +655,8 @@ export class GameController {
 
   handleNext(): void {
     playSound('tap')
+    this.sessionEpoch++
+    this.renderer.abortPendingMoveAnimations()
     this.dismissResultOverlay()
     void this.startSession((this.session?.level.levelNumber ?? 1) + 1)
   }

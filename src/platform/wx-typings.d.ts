@@ -26,7 +26,30 @@ declare namespace WechatMinigame {
 
   type OnTouchEventCallback = (res: OnTouchEventCallbackResult) => void
 
-  interface Canvas extends HTMLCanvasElement {}
+  interface Canvas extends HTMLCanvasElement {
+    toTempFilePath?(options: {
+      x: number
+      y: number
+      width: number
+      height: number
+      destWidth: number
+      destHeight: number
+      fileType?: 'png' | 'jpg'
+      quality?: number
+      success?: (res: { tempFilePath: string }) => void
+      fail?: () => void
+    }): void
+    toTempFilePathSync?(options: {
+      x: number
+      y: number
+      width: number
+      height: number
+      destWidth: number
+      destHeight: number
+      fileType?: 'png' | 'jpg'
+      quality?: number
+    }): string
+  }
 
   interface MenuButtonBoundingClientRect {
     width: number
@@ -105,6 +128,7 @@ declare namespace WechatMinigame {
     }): boolean
     shareAppMessage?(options: {
       title: string
+      imageUrl?: string
       success?: () => void
       fail?: () => void
       complete?: () => void

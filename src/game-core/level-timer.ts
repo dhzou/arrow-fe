@@ -1,6 +1,6 @@
 import { getPlatform } from '@/platform'
 
-export const LEVEL_TIME_SECONDS = 180
+export const LEVEL_TIME_SECONDS = 150
 export const LEVEL_TIME_MS = LEVEL_TIME_SECONDS * 1000
 
 /** @deprecated 与 LEVEL_TIME_MS 相同 */

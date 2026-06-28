@@ -12,6 +12,7 @@ import { isPathStyleLevel, isCompactPathLevel } from '@/game-core/snake-difficul
 import { getBoardTheme, boardThemeFrameBg, boardThemeHasChromeSplit, normalizeBoardThemeIndex } from '@/game/board-theme'
 import { getPlatform, isWxMiniGame } from '@/platform'
 import { resolveWxPixiInit } from '@/wx/canvas'
+import { wxCanvasCropToTempFile, wxCanvasCropToTempFileSync } from '@/wx/wx-canvas-capture'
 import { GAME_HUD, l1PlateInsets, pathBottomHudHeight } from '@/game/game-ui-content'
 import { snapBoardZoom, touchSpan, zoomFromPinchSpan } from '@/game/board-gesture'
 import {
@@ -87,6 +88,7 @@ export class SnakeRenderer {
   private app: Application | null = null
   private board: Container | null = null
   private stageDecor: Graphics | null = null
+  private readonly overlayLayers: Container[] = []
   private boardBg: Graphics | null = null
   private scanlines: Graphics | null = null
   private roadsStatic: Graphics | null = null
@@ -555,6 +557,67 @@ export class SnakeRenderer {
 
   addOverlayLayer(layer: Container): void {
     this.app?.stage.addChild(layer)
+    if (!this.overlayLayers.includes(layer)) {
+      this.overlayLayers.push(layer)
+    }
+  }
+
+  /** 截取可玩区（不含 HUD）棋盘截图，供微信分享 imageUrl 使用 */
+  async capturePlayfieldScreenshot(): Promise<string | null> {
+    return this.capturePlayfieldToTempFile(false)
+  }
+
+  /** 同步截取可玩区，供 onShareAppMessage 立即返回 imageUrl */
+  capturePlayfieldScreenshotSync(): string | null {
+    return this.capturePlayfieldToTempFile(true)
+  }
+
+  private capturePlayfieldToTempFile(sync: true): string | null
+  private capturePlayfieldToTempFile(sync: false): Promise<string | null>
+  private capturePlayfieldToTempFile(sync: boolean): Promise<string | null> | string | null {
+    if (!this.app || !isWxMiniGame()) {
+      return sync ? null : Promise.resolve(null)
+    }
+
+    const savedVisibility = this.overlayLayers.map((layer) => layer.visible)
+    for (const layer of this.overlayLayers) {
+      layer.visible = false
+    }
+
+    if (this.renderFlushRaf) {
+      this.cancelFrame(this.renderFlushRaf)
+      this.renderFlushRaf = 0
+    }
+    this.app.render()
+
+    const { offsetX, offsetY, w, h } = this.playfieldSize()
+    const dpr = getPlatform().getDevicePixelRatio()
+    const crop = {
+      x: offsetX * dpr,
+      y: offsetY * dpr,
+      width: w * dpr,
+      height: h * dpr,
+      destWidth: Math.max(400, Math.round(w * 2)),
+      destHeight: Math.max(400, Math.round(h * 2)),
+    }
+    const canvas = this.app.canvas as WechatMinigame.Canvas
+
+    const restore = (): void => {
+      this.overlayLayers.forEach((layer, index) => {
+        layer.visible = savedVisibility[index] ?? true
+      })
+      this.forceRender()
+    }
+
+    if (sync) {
+      try {
+        return wxCanvasCropToTempFileSync(canvas, crop)
+      } finally {
+        restore()
+      }
+    }
+
+    return wxCanvasCropToTempFile(canvas, crop).finally(restore)
   }
 
   getScreenSize(): { width: number; height: number } {
@@ -915,6 +978,17 @@ export class SnakeRenderer {
     }
     this.moveSlides.clear()
     this.syncAnimatingFlag()
+  }
+
+  /** 进关 / 下一步前丢弃未完成的滑出动画，且不触发 onComplete */
+  abortPendingMoveAnimations(): void {
+    this.clearMoveSlides()
+    if (this.blockedHighlightId !== null) {
+      this.cancelAnimation?.()
+      this.cancelAnimation = null
+      this.blockedHighlightId = null
+      this.syncAnimatingFlag()
+    }
   }
 
   private startMoveSlideAnimation(opts: {

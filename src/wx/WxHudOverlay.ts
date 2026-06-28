@@ -260,6 +260,14 @@ export class WxHudOverlay extends Container {
 
   bindGameModalTextureReady(onReady: () => void): void {
     this.gameModalCanvasLayer.onTextureReady = () => {
+      const s = this.state
+      const showResult =
+        s && !s.loading && (s.overlay === 'complete' || s.overlay === 'failed')
+      if (!showResult) {
+        this.gameModalCanvasLayer.visible = false
+        return
+      }
+      this.gameModalCanvasLayer.visible = true
       const hits = this.gameModalCanvasLayer.getHits()
       if (hits) {
         this.modalPrimaryRect = hits.primary
@@ -514,7 +522,10 @@ export class WxHudOverlay extends Container {
     const prev = this.lastResultModal
     this.lastResultModal = next
     if (prev !== 'none' || next !== 'none') {
-      this.gameModalCanvasLayer.invalidateBakedTexture()
+      this.gameModalCanvasLayer.dismiss()
+    }
+    if (next === 'none') {
+      this.gameModalCanvasLayer.visible = false
     }
   }
 

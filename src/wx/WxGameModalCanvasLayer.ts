@@ -43,6 +43,7 @@ export class WxGameModalCanvasLayer extends Sprite {
   private cacheKey = ''
   private lastHits: GameModalHitRects | null = null
   private baking: Promise<void> | null = null
+  private bakeGeneration = 0
   private pending: {
     screenW: number
     screenH: number
@@ -75,7 +76,15 @@ export class WxGameModalCanvasLayer extends Sprite {
   }
 
   invalidateBakedTexture(): void {
+    this.dismiss()
+  }
+
+  /** 关闭弹窗并丢弃排队/在途烘焙，防止切关后旧纹理闪现 */
+  dismiss(): void {
+    this.bakeGeneration++
+    this.pending = null
     this.cacheKey = ''
+    this.visible = false
     invalidateWxCanvasBake(this, this.bakeState)
   }
 
@@ -128,6 +137,7 @@ export class WxGameModalCanvasLayer extends Sprite {
   ): GameModalHitRects | null {
     if (isWxCanvasBakeBusy()) return this.lastHits
 
+    const gen = this.bakeGeneration
     const ok = runWxCanvasBakeSync(() => {
       const dpr = Math.min(getPlatform().getDevicePixelRatio(), 2)
       const pixelW = Math.max(1, Math.ceil(screenW * dpr))
@@ -160,7 +170,7 @@ export class WxGameModalCanvasLayer extends Sprite {
       this.height = screenH
     })
 
-    if (ok) this.onTextureReady?.()
+    if (ok && gen === this.bakeGeneration) this.onTextureReady?.()
     return this.lastHits
   }
 
@@ -177,8 +187,10 @@ export class WxGameModalCanvasLayer extends Sprite {
     const p = this.pending
     if (!p) return
     this.pending = null
+    const gen = this.bakeGeneration
 
     await withWxCanvasBakeLock(async () => {
+      if (gen !== this.bakeGeneration) return
       const dpr = Math.min(getPlatform().getDevicePixelRatio(), 2)
       const pixelW = Math.max(1, Math.ceil(p.screenW * dpr))
       const pixelH = Math.max(1, Math.ceil(p.screenH * dpr))
@@ -218,7 +230,10 @@ export class WxGameModalCanvasLayer extends Sprite {
             )
       this.lastHits = hits
 
+      if (gen !== this.bakeGeneration) return
+
       await bakeCanvasToImageSprite(this, this.bakeState, canvas, dpr, p.screenW, p.screenH)
+      if (gen !== this.bakeGeneration) return
       this.width = p.screenW
       this.height = p.screenH
       this.onTextureReady?.()

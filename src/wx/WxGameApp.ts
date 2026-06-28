@@ -10,6 +10,7 @@ import { snapBoardZoom, touchSpan, zoomFromPinchSpan } from '@/game/board-gestur
 import { isPathStyleLevel, isCompactPathLevel } from '@/game-core/snake-difficulty'
 import { ensureSnakeLevelsLoaded } from '@/game-core/snake-levels'
 import { getPlatform, wxPlatform } from '@/platform'
+import type { ShareMenuContent } from '@/platform/types'
 import { SnakeRenderer } from '@/renderer/SnakeRenderer'
 import { playSound, resumeAudio } from '@/utils/sound'
 import { MINIGAME_STORE } from '@/game/game-ui-content'
@@ -82,7 +83,10 @@ export class WxGameApp {
         this.platform
     }
 
-    this.platform.showShareMenu?.({ title: `${MINIGAME_STORE.shareTitle} - ${MINIGAME_STORE.shareText}` })
+    this.platform.showShareMenu?.({
+      title: `${MINIGAME_STORE.shareTitle} - ${MINIGAME_STORE.shareText}`,
+      resolveShareContent: () => this.resolveShareContent(),
+    })
     initWxCloud()
 
     const metrics = this.platform.getScreenMetrics()
@@ -159,6 +163,7 @@ export class WxGameApp {
       onLevelComplete: (_levelNumber, newCurrentLevel) => {
         void submitRanking(newCurrentLevel)
       },
+      captureShareImage: () => this.captureBoardShareImage(),
     })
     this.renderer.onCellClick((x, y) => void this.ensureController().handleTap(x, y))
     return this.controller
@@ -333,6 +338,25 @@ export class WxGameApp {
       boardThemeIndex: this.progress.boardThemeIndex,
     })
     this.renderer.forceRender()
+  }
+
+  private async captureBoardShareImage(): Promise<string | undefined> {
+    if (this.screen !== 'game' || !this.controller?.session) return undefined
+    const path = await this.renderer.capturePlayfieldScreenshot()
+    return path ?? undefined
+  }
+
+  private resolveShareContent(): ShareMenuContent {
+    const defaultTitle = `${MINIGAME_STORE.shareTitle} - ${MINIGAME_STORE.shareText}`
+    if (this.screen !== 'game' || !this.controller?.session) {
+      return { title: defaultTitle }
+    }
+    const level = this.controller.session.level.levelNumber
+    const imageUrl = this.renderer.capturePlayfieldScreenshotSync() ?? undefined
+    return {
+      title: `第 ${level} 关 · ${MINIGAME_STORE.shareTitle}`,
+      imageUrl,
+    }
   }
 
   private syncHud(): void {

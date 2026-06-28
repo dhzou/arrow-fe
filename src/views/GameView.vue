@@ -575,7 +575,7 @@ onUnmounted(() => {
     </footer>
 
     <LevelCompleteModal
-      v-if="showComplete && session"
+      v-if="showComplete && session && !levelLoading"
       :level-label="levelLabel"
       :moves="session.moves"
       :win-streak="progress.winStreak"
@@ -584,7 +584,7 @@ onUnmounted(() => {
     />
 
     <LevelFailedModal
-      v-if="showFailed && session"
+      v-if="showFailed && session && !levelLoading"
       :level-label="levelLabel"
       :reason="failReason ?? 'lives'"
       :share-time-remaining="failReason === 'time' ? shareTimeRemaining : 0"

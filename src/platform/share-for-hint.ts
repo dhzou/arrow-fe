@@ -15,7 +15,8 @@ function wxShareTimeout(ms: number, cb: () => void): number {
 }
 
 /** 微信转发面板分享（可分享给任意好友，含未玩过） */
-function wxShareAppMessage(payload: ShareForHintPayload): Promise<ShareForHintOutcome> {
+async function wxShareAppMessage(payload: ShareForHintPayload): Promise<ShareForHintOutcome> {
+  const imageUrl = payload.getShareImage ? await payload.getShareImage() : undefined
   return new Promise((resolve) => {
     let settled = false
     const settle = (outcome: ShareForHintOutcome) => {
@@ -26,6 +27,7 @@ function wxShareAppMessage(payload: ShareForHintPayload): Promise<ShareForHintOu
     const wxApi = wx as WechatMinigame.Wx & {
       shareAppMessage?: (opts: {
         title: string
+        imageUrl?: string
         success?: () => void
         fail?: () => void
       }) => void
@@ -36,6 +38,7 @@ function wxShareAppMessage(payload: ShareForHintPayload): Promise<ShareForHintOu
     }
     wxApi.shareAppMessage({
       title: payload.title,
+      ...(imageUrl ? { imageUrl } : {}),
       success: () => settle('granted'),
       fail: () => settle('cancelled'),
     })
