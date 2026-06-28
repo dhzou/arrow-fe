@@ -4,7 +4,7 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 
 const db = cloud.database()
 
-const MAX_SHARE_PER_PAIR_PER_DAY = 3
+const MAX_SHARE_PER_DAY = 3
 
 function todayKey() {
   const d = new Date(Date.now() + 8 * 60 * 60 * 1000)
@@ -19,7 +19,7 @@ function normalizeRewardType(type) {
   return null
 }
 
-/** 分享奖励：分享者发给同一好友，当天最多计 3 次（分享成功即计数，无需好友打开） */
+/** 分享奖励：普通转发，按奖励类型每天最多 3 次 */
 exports.main = async (event) => {
   const { OPENID } = cloud.getWXContext()
   if (!OPENID) {
@@ -33,9 +33,8 @@ exports.main = async (event) => {
   }
 
   if (action === 'recordShare') {
-    const recipientOpenId = String(event.recipientOpenId || '').trim()
     const rewardType = normalizeRewardType(event.rewardType)
-    if (!recipientOpenId || !rewardType) {
+    if (!rewardType) {
       return { ok: false, error: 'INVALID_PARAMS' }
     }
 
@@ -44,13 +43,13 @@ exports.main = async (event) => {
     const pairCol = db.collection('share_pair_daily')
 
     const existing = await pairCol
-      .where({ sharerOpenId, recipientOpenId, date })
+      .where({ sharerOpenId, date, rewardType })
       .limit(1)
       .get()
     const doc = existing.data[0]
     const prev = doc?.count || 0
 
-    if (prev >= MAX_SHARE_PER_PAIR_PER_DAY) {
+    if (prev >= MAX_SHARE_PER_DAY) {
       return {
         ok: true,
         granted: false,
@@ -70,8 +69,8 @@ exports.main = async (event) => {
       await pairCol.add({
         data: {
           sharerOpenId,
-          recipientOpenId,
           date,
+          rewardType,
           count: next,
           updatedAt: now,
         },
@@ -82,7 +81,7 @@ exports.main = async (event) => {
       ok: true,
       granted: true,
       limitReached: false,
-      remaining: Math.max(0, MAX_SHARE_PER_PAIR_PER_DAY - next),
+      remaining: Math.max(0, MAX_SHARE_PER_DAY - next),
     }
   }
 

@@ -16,6 +16,11 @@ export interface ScreenMetrics {
   hudRightInset: number
 }
 
+export type ShareRewardType = 'hint' | 'assist' | 'time' | 'life'
+
+/** 分享结果：取消 / 可发奖 / 已达同一好友上限 */
+export type ShareForHintOutcome = 'cancelled' | 'granted' | 'limited'
+
 export interface ShareForHintPayload {
   title: string
   text: string
@@ -23,6 +28,8 @@ export interface ShareForHintPayload {
   modalBody: string
   confirmText: string
   cancelText: string
+  /** 奖励类型，微信端用于定向分享与云函数计次 */
+  rewardType?: ShareRewardType
 }
 
 export interface PlatformAPI {
@@ -39,8 +46,8 @@ export interface PlatformAPI {
   onTouchEnd(handler: (x: number, y: number) => void): () => void
   onWindowResize(handler: () => void): () => void
   showShareMenu?(opts: { title: string }): void
-  /** 发起分享以换取提示，成功返回 true */
-  shareForHint?(payload: ShareForHintPayload): Promise<boolean>
+  /** 发起分享以换取奖励 */
+  shareForHint?(payload: ShareForHintPayload): Promise<ShareForHintOutcome>
   /** 路径被挡时的短震动 */
   vibrateBlocked?(): void
   /** 数据埋点（微信 We 分析 reportEvent 等） */

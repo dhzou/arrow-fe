@@ -5,7 +5,7 @@ import { wxGetContextChunkPatch } from './src/wx/vite-plugin-wx-getcontext-chunk
 const pixi = (path: string) =>
   fileURLToPath(new URL(`./node_modules/pixi.js/${path}`, import.meta.url))
 
-/** 微信小游戏构建：输出 minigame/game.js（CommonJS 单文件） */
+/** 微信小游戏构建：输出 minigame/game.js（IIFE 单文件，勿用 CJS） */
 export default defineConfig({
   plugins: [wxGetContextChunkPatch()],
   resolve: {
@@ -25,6 +25,9 @@ export default defineConfig({
       ),
       'pixi-abstract-renderer': pixi('lib/rendering/renderers/shared/system/AbstractRenderer.mjs'),
       'pixi-event-system': pixi('lib/events/EventSystem.mjs'),
+      [pixi('lib/utils/browser/isWebGLSupported.mjs')]: fileURLToPath(
+        new URL('./src/wx/shims/pixi-is-webgl-supported.ts', import.meta.url),
+      ),
     },
   },
   define: {
@@ -35,16 +38,16 @@ export default defineConfig({
     emptyOutDir: false,
     lib: {
       entry: fileURLToPath(new URL('./src/wx/main.ts', import.meta.url)),
-      formats: ['cjs'],
+      formats: ['iife'],
+      name: 'ArrowWx',
       fileName: () => 'game.js',
     },
     rollupOptions: {
       output: {
         inlineDynamicImports: true,
-        exports: 'none',
       },
     },
-    target: 'es2015',
+    target: 'es2017',
     minify: 'esbuild',
     sourcemap: false,
   },

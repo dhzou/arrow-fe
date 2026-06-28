@@ -8,6 +8,7 @@ import {
   assertWxCanvasStackReady,
   installWxCanvasPrototypeGetContext,
   isWxIosPlatform,
+  markWxWebglSupported,
   setWxMainCanvas,
 } from './canvas'
 import { installWxDOMAdapter } from './wx-dom-adapter'
@@ -541,6 +542,7 @@ if (typeof wx !== 'undefined') {
   const canvas = ensureWxCanvasGetContext(wx.createCanvas())
   setWxMainCanvas(canvas)
   installWxDOMAdapter()
+  markWxWebglSupported()
   assertWxCanvasStackReady()
   const info = wx.getSystemInfoSync()
   const ratio = Math.min(info.pixelRatio || 1, 2)

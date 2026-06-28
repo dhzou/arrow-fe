@@ -50,8 +50,8 @@ export async function bakeCanvasToImageSprite(
   }
 
   const img = await loadWxImage(dataUrl)
-  const imgW = Math.max(1, img.width || pixelW)
-  const imgH = Math.max(1, img.height || pixelH)
+  const imgW = Math.max(1, img.width || canvas.width || logicalW)
+  const imgH = Math.max(1, img.height || canvas.height || logicalH)
 
   // 微信真机上 ImageSource.update() 偶发不同步尺寸，复用会导致 sprite 被非等比缩放（文字发糊/压窄）
   state.texture?.destroy(false)

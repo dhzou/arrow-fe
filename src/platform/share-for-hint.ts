@@ -1,6 +1,10 @@
-import type { ShareForHintPayload } from './types'
+import type { ShareForHintOutcome, ShareForHintPayload } from './types'
+import {
+  isWxShareRewardCloudAvailable,
+  tryRecordWxShareReward,
+} from '@/wx/wx-share-reward'
 
-function wxShareFallbackTimeout(ms: number, cb: () => void): number {
+function wxShareTimeout(ms: number, cb: () => void): number {
   const wxApi = wx as WechatMinigame.Wx & {
     setTimeout?: (callback: () => void, delay: number) => number
   }
@@ -10,62 +14,70 @@ function wxShareFallbackTimeout(ms: number, cb: () => void): number {
   return globalThis.setTimeout(cb, ms) as unknown as number
 }
 
-/** 微信：确认后调起转发 */
-export function wxShareForHint(payload: ShareForHintPayload): Promise<boolean> {
+/** 微信转发面板分享（可分享给任意好友，含未玩过） */
+function wxShareAppMessage(payload: ShareForHintPayload): Promise<ShareForHintOutcome> {
   return new Promise((resolve) => {
+    let settled = false
+    const settle = (outcome: ShareForHintOutcome) => {
+      if (settled) return
+      settled = true
+      resolve(outcome)
+    }
+    const wxApi = wx as WechatMinigame.Wx & {
+      shareAppMessage?: (opts: {
+        title: string
+        success?: () => void
+        fail?: () => void
+      }) => void
+    }
+    if (typeof wxApi.shareAppMessage !== 'function') {
+      settle('granted')
+      return
+    }
+    wxApi.shareAppMessage({
+      title: payload.title,
+      success: () => settle('granted'),
+      fail: () => settle('cancelled'),
+    })
+    wxShareTimeout(800, () => settle('granted'))
+  })
+}
+
+/** 微信：确认后走普通分享，云函数按天计次 */
+export async function wxShareForHint(payload: ShareForHintPayload): Promise<ShareForHintOutcome> {
+  const confirmed = await new Promise<boolean>((resolve) => {
     wx.showModal({
       title: payload.modalTitle,
       content: payload.modalBody,
       confirmText: payload.confirmText,
       cancelText: payload.cancelText,
-      success: (res) => {
-        if (!res.confirm) {
-          resolve(false)
-          return
-        }
-        let settled = false
-        const settle = (ok: boolean) => {
-          if (settled) return
-          settled = true
-          resolve(ok)
-        }
-        const wxApi = wx as WechatMinigame.Wx & {
-          shareAppMessage?: (opts: {
-            title: string
-            success?: () => void
-            fail?: () => void
-            complete?: () => void
-          }) => void
-        }
-        if (typeof wxApi.shareAppMessage === 'function') {
-          wxApi.shareAppMessage({
-            title: payload.title,
-            success: () => settle(true),
-            fail: () => settle(true),
-            complete: () => settle(true),
-          })
-          // 小游戏 shareAppMessage 回调常不稳定，拉起分享面板后兜底结算
-          wxShareFallbackTimeout(600, () => settle(true))
-          return
-        }
-        settle(true)
-      },
+      success: (res) => resolve(!!res.confirm),
       fail: () => resolve(false),
     })
   })
+  if (!confirmed) return 'cancelled'
+
+  const outcome = await wxShareAppMessage(payload)
+  if (outcome !== 'granted' || !payload.rewardType || !isWxShareRewardCloudAvailable()) {
+    return outcome
+  }
+
+  const record = await tryRecordWxShareReward(payload.rewardType)
+  if (record === 'limited') return 'limited'
+  return 'granted'
 }
 
 /** Web：系统分享或复制链接 */
-export async function webShareForHint(payload: ShareForHintPayload): Promise<boolean> {
+export async function webShareForHint(payload: ShareForHintPayload): Promise<ShareForHintOutcome> {
   const url = typeof window !== 'undefined' ? window.location.href : ''
   const shareText = `${payload.text}`
 
   if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
     try {
       await navigator.share({ title: payload.title, text: shareText, url })
-      return true
+      return 'granted'
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') return false
+      if (err instanceof Error && err.name === 'AbortError') return 'cancelled'
     }
   }
 
@@ -73,7 +85,7 @@ export async function webShareForHint(payload: ShareForHintPayload): Promise<boo
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(copyValue)
-      return true
+      return 'granted'
     }
   } catch {
     /* fallback below */
@@ -81,8 +93,8 @@ export async function webShareForHint(payload: ShareForHintPayload): Promise<boo
 
   if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
     window.prompt('复制以下链接分享给好友', copyValue)
-    return true
+    return 'granted'
   }
 
-  return false
+  return 'cancelled'
 }

@@ -14,17 +14,24 @@ export function wxSafeGetContext2d(
   opts?: unknown,
 ): CanvasRenderingContext2D | null {
   if (!canvas || typeof canvas !== 'object') return null
-  if (g2dDepth > 6) return null
+
+  const wxCanvas = canvas as WxCanvasLike
+
+  // 深度过大时仍尝试原生 getContext，避免 Pixi 嵌套调用拿到 null
+  if (g2dDepth > 8) {
+    return nativeWxGetContext2d(ensureWxCanvasGetContext(wxCanvas), opts)
+  }
+
   g2dDepth += 1
   try {
-    const safe = ensureWxCanvasGetContext(canvas as WxCanvasLike)
+    const safe = ensureWxCanvasGetContext(wxCanvas)
     const ctx = nativeWxGetContext2d(safe, opts)
     if (ctx) return ctx
 
     // iOS 主屏无 2d（Pixi 走 WebGL）：文字/UI 烘焙回退共享离屏 canvas
     if (typeof wx !== 'undefined' && canvas === getWxMainCanvas()) {
       try {
-        return nativeWxGetContext2d(getWxSharedOffscreenCanvas())
+        return nativeWxGetContext2d(getWxSharedOffscreenCanvas(), opts)
       } catch {
         return null
       }

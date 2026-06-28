@@ -2,9 +2,14 @@ import { DOMParser } from '@xmldom/xmldom'
 import { DOMAdapter } from 'pixi-environment-adapter'
 import { AbstractRenderer } from 'pixi-abstract-renderer'
 import { EventSystem } from 'pixi-event-system'
+import { AccessibilitySystem } from 'pixi.js'
 import { installWxDOMAdapter } from './wx-dom-adapter'
 import { patchCanvasSourceForWx } from './pixi-patch-canvas-source'
 import { patchCanvasTextMetricsForWx } from './pixi-patch-canvas-text-metrics'
+import { patchCanvasPoolForWx } from './pixi-patch-canvas-pool'
+import { patchCanvasContextSystemForWx } from './pixi-patch-canvas-context-system'
+import { patchCanvasFilterSystemForWx } from './pixi-patch-canvas-filter-system'
+import { patchCanvasRenderTargetAdaptorForWx } from './pixi-patch-canvas-render-target-adaptor'
 
 let wxPixiAdapterInstalled = false
 
@@ -20,6 +25,16 @@ function patchRendererSystemInstaller(): void {
       return false
     })
     return origAddSystems.call(this, valid)
+  }
+}
+
+function patchAccessibilitySystemForWx(): void {
+  const proto = AccessibilitySystem.prototype as {
+    _createTouchHook: () => void
+  }
+  // 微信 mock DOM 不是真实 Node，appendChild 会在 init 阶段崩溃
+  proto._createTouchHook = function () {
+    this._hookDiv = null
   }
 }
 
@@ -48,7 +63,12 @@ export function installWxPixiAdapter(): void {
   installWxDOMAdapter()
   patchCanvasSourceForWx()
   patchCanvasTextMetricsForWx()
+  patchCanvasPoolForWx()
+  patchCanvasContextSystemForWx()
+  patchCanvasFilterSystemForWx()
+  patchCanvasRenderTargetAdaptorForWx()
   patchRendererSystemInstaller()
+  patchAccessibilitySystemForWx()
   patchEventSystemForWx()
 
   const adapter = DOMAdapter.get()

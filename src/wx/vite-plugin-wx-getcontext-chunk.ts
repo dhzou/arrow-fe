@@ -1,6 +1,10 @@
 import type { Plugin } from 'vite'
+import fs from 'node:fs'
+import path from 'node:path'
 
 const MARKER = '__WX_G2D__'
+const WEBGL_SUPPORTED_RE =
+  /if\(!([\w$]+)\.get\(\)\.getWebGLRenderingContext\(\)\)return!1;let r=\1\.get\(\)\.createCanvas\(\)\.getContext\("webgl"/
 
 function applyGetContextPatch(code: string): string {
   let out = code
@@ -31,6 +35,17 @@ function applyGetContextPatch(code: string): string {
   return out
 }
 
+function applyWebglSupportedPatch(code: string): string {
+  if (code.includes('__WX_WEBGL_OK__)return!0') || !WEBGL_SUPPORTED_RE.test(code)) {
+    return code
+  }
+  console.log('[wx-getcontext-chunk-patch] 已 patch isWebGLSupported (__WX_WEBGL_OK__)')
+  return code.replace(
+    WEBGL_SUPPORTED_RE,
+    'if(typeof globalThis!=="undefined"&&globalThis.__WX_WEBGL_OK__)return!0;if(!$1.get().getWebGLRenderingContext())return!1;let r=$1.get().createCanvas().getContext("webgl"',
+  )
+}
+
 /**
  * 微信 iOS 上部分 canvas 无 getContext，运行时 prototype patch 不可靠。
  * 在最终 game.js 里把所有 .getContext("2d") 替换成 globalThis.__WX_G2D__。
@@ -54,7 +69,19 @@ export function wxGetContextChunkPatch(): Plugin {
         console.log(`[wx-getcontext-chunk-patch] 已替换 ${before} 处 getContext("2d")`)
       }
 
+      out = applyWebglSupportedPatch(out)
+
       return { code: out, map: null }
+    },
+    closeBundle() {
+      const outDir = path.resolve(process.cwd(), 'minigame')
+      const file = path.join(outDir, 'game.js')
+      if (!fs.existsSync(file)) return
+      const code = fs.readFileSync(file, 'utf8')
+      const patched = applyWebglSupportedPatch(code)
+      if (patched !== code) {
+        fs.writeFileSync(file, patched)
+      }
     },
   }
 }

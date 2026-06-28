@@ -6,7 +6,7 @@ import type { SnakeRenderer } from '@/renderer/SnakeRenderer'
 import { getPlatform } from '@/platform'
 import { playSound, resumeAudio } from '@/utils/sound'
 import { triggerBlockedFeedback } from '@/utils/feedback'
-import { SHARE_ASSIST, SHARE_HINT, SHARE_LIFE, SHARE_TIME, SHARE_TIME_BONUS_MS } from '@/game/game-ui-content'
+import { SHARE_ASSIST, SHARE_HINT, SHARE_LIFE, SHARE_LIMIT_TOAST, SHARE_TIME, SHARE_TIME_BONUS_MS } from '@/game/game-ui-content'
 import type { ProgressPort } from './ProgressPort'
 
 export type GameOverlay = 'none' | 'complete' | 'failed' | 'tutorial' | 'pause'
@@ -398,8 +398,12 @@ export class GameController {
     this.shareForAssistInFlight = true
     try {
       await resumeAudio()
-      const ok = await platform.shareForHint(SHARE_ASSIST)
-      if (!ok || !this.session) return
+      const outcome = await platform.shareForHint(SHARE_ASSIST)
+      if (!this.session || outcome === 'cancelled') return
+      if (outcome === 'limited') {
+        this.showShareHintToast(SHARE_LIMIT_TOAST)
+        return
+      }
       this.session.grantShareAssist()
       this.persistConsumables()
       playSound('complete')
@@ -461,8 +465,12 @@ export class GameController {
     this.shareForHintInFlight = true
     try {
       await resumeAudio()
-      const ok = await platform.shareForHint(SHARE_HINT)
-      if (!ok || !this.session) return
+      const outcome = await platform.shareForHint(SHARE_HINT)
+      if (!this.session || outcome === 'cancelled') return
+      if (outcome === 'limited') {
+        this.showShareHintToast(SHARE_LIMIT_TOAST)
+        return
+      }
       this.session.grantShareHint()
       this.persistConsumables()
       playSound('complete')
@@ -515,8 +523,12 @@ export class GameController {
     this.shareForLifeInFlight = true
     try {
       await resumeAudio()
-      const ok = await platform.shareForHint(SHARE_LIFE)
-      if (!ok || !this.session) return
+      const outcome = await platform.shareForHint(SHARE_LIFE)
+      if (!this.session || outcome === 'cancelled') return
+      if (outcome === 'limited') {
+        this.showShareHintToast(SHARE_LIMIT_TOAST)
+        return
+      }
       if (!this.session.grantShareLife()) return
 
       this.failReason = null
@@ -545,8 +557,12 @@ export class GameController {
     this.shareForTimeInFlight = true
     try {
       await resumeAudio()
-      const ok = await platform.shareForHint(SHARE_TIME)
-      if (!ok || !this.session) return
+      const outcome = await platform.shareForHint(SHARE_TIME)
+      if (!this.session || outcome === 'cancelled') return
+      if (outcome === 'limited') {
+        this.showShareHintToast(SHARE_LIMIT_TOAST)
+        return
+      }
       if (!this.session.grantShareTime()) return
 
       this.levelTimer.addTime(SHARE_TIME_BONUS_MS)

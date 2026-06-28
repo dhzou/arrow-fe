@@ -37,6 +37,15 @@ declare namespace WechatMinigame {
     left: number
   }
 
+  interface AuthSetting {
+    [scope: string]: boolean | undefined
+  }
+
+  interface OpenDataContext {
+    postMessage(message: Record<string, unknown>): void
+    onMessage?(callback: (message: Record<string, unknown>) => void): void
+  }
+
   interface Wx {
     getSystemInfoSync(): SystemInfo
     getMenuButtonBoundingClientRect?(): MenuButtonBoundingClientRect
@@ -68,6 +77,32 @@ declare namespace WechatMinigame {
       fail?: () => void
     }): void
     showToast?(options: { title: string; icon?: 'none' | 'success' | 'error'; duration?: number }): void
+    showLoading?(options: { title?: string; mask?: boolean }): void
+    hideLoading?(): void
+    showActionSheet?(options: {
+      itemList: string[]
+      success?: (res: { tapIndex: number }) => void
+      fail?: () => void
+    }): void
+    getSetting?(options: {
+      success?: (res: { authSetting?: AuthSetting }) => void
+      fail?: () => void
+    }): void
+    authorize?(options: {
+      scope: string
+      success?: () => void
+      fail?: () => void
+    }): void
+    openSetting?(options: { complete?: () => void }): void
+    setUserCloudStorage?(options: {
+      KVDataList: Array<{ key: string; value: string }>
+      fail?: (err: unknown) => void
+    }): void
+    getOpenDataContext?(): OpenDataContext
+    setMessageToFriendQuery?(options: {
+      shareMessageToFriendScene: number
+      query?: string
+    }): boolean
     shareAppMessage?(options: {
       title: string
       success?: () => void

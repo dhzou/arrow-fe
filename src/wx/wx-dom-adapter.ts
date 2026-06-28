@@ -3,10 +3,14 @@ import { DOMAdapter } from 'pixi-environment-adapter'
 import { BrowserAdapter } from 'pixi-browser-adapter'
 import {
   canUseWx2dCanvas,
+  canUseWxWebglCanvas,
   ensureWxCanvasGetContext,
   getWxCanvas2dContext,
   getWxMainCanvas,
+  getWxPixiPoolCanvas,
   getWxSharedOffscreenCanvas,
+  getWxWebglProbeCanvas,
+  needsWxIosWebglDirectRender,
   probeWebGLConstructor,
 } from './canvas'
 
@@ -15,6 +19,28 @@ type WxCanvasLike = WechatMinigame.Canvas & {
 }
 
 let wxDomAdapterInstalled = false
+
+const WEBGL_CTX = 'webgl'
+
+function attachWxWebglGetContextProxy(canvas: WxCanvasLike): WxCanvasLike {
+  if (!needsWxIosWebglDirectRender()) return canvas
+  const main = getWxMainCanvas()
+  if (canUseWx2dCanvas(main) || !canUseWxWebglCanvas(main)) return canvas
+  if ((canvas as WxCanvasLike & { __wxWebglProxy?: boolean }).__wxWebglProxy) return canvas
+
+  const origGetContext = canvas.getContext?.bind(canvas)
+  if (!origGetContext) return canvas
+
+  ;(canvas as WxCanvasLike & { __wxWebglProxy?: boolean }).__wxWebglProxy = true
+  canvas.getContext = ((type: string, opts?: unknown) => {
+    if (type === WEBGL_CTX || type === 'webgl2') {
+      const probe = getWxWebglProbeCanvas()
+      return (probe.getContext?.(WEBGL_CTX, opts) as WebGLRenderingContext | null) ?? null
+    }
+    return origGetContext(type, opts)
+  }) as typeof canvas.getContext
+  return canvas
+}
 
 function contextConstructor<T>(ctx: object | null): T | null {
   if (!ctx) return null
@@ -28,7 +54,7 @@ export function installWxDOMAdapter(): void {
 
   DOMAdapter.set({
     createCanvas(width, height) {
-      const canvas = getWxSharedOffscreenCanvas()
+      const canvas = attachWxWebglGetContextProxy(getWxPixiPoolCanvas())
       if (width) canvas.width = width
       if (height) canvas.height = height
       return ensureWxCanvasGetContext(canvas) as HTMLCanvasElement
