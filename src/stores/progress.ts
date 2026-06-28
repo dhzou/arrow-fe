@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import type { SaveData } from '@/game-core/types'
-import { getBoardTheme, nextBoardThemeIndex, normalizeBoardThemeIndex } from '@/game/board-theme'
+import { DEFAULT_BOARD_THEME_INDEX, getBoardTheme, nextBoardThemeIndex, normalizeBoardThemeIndex } from '@/game/board-theme'
 import type { BoardTheme } from '@/game/board-theme'
 import { syncThemePack } from '@/game/apply-ui-theme'
 import {
@@ -99,7 +99,9 @@ export const useProgressStore = defineStore('progress', {
     },
 
     cycleBoardTheme(): BoardTheme {
-      const next = nextBoardThemeIndex(normalizeBoardThemeIndex(this.settings.boardThemeIndex ?? 0))
+      const next = nextBoardThemeIndex(
+        normalizeBoardThemeIndex(this.settings.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX),
+      )
       this.settings.boardThemeIndex = next
       syncThemePack(next)
       this.persist()

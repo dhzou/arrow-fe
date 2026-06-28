@@ -1,11 +1,10 @@
 import {
-  drawGameIcon2d,
-  drawGlow,
+  drawModalBackdrop,
   fillGlassPanelAccent,
-  fillHGradient,
   hexCss,
   roundRectPath,
 } from '@/canvas-home/canvas2d-draw'
+import { UI_BTN } from '@/canvas-home/ui-button-system'
 import { mapRoutePoint, ROUTE_ICON_POLYGONS } from '@/canvas-home/game-icon-paths'
 import {
   computeSettingsLayout,
@@ -18,7 +17,14 @@ import {
   type Rect,
   type SettingsModalLayout,
 } from '@/canvas-home/settings-layout'
-import { BOARD_THEMES, boardThemeFrameCss, boardThemeHasChromeSplit, boardThemePathCss, getBoardTheme } from '@/game/board-theme'
+import {
+  BOARD_THEMES,
+  boardThemeFrameCss,
+  boardThemeHasChromeSplit,
+  boardThemePathCss,
+  getBoardTheme,
+  normalizeBoardThemeIndex,
+} from '@/game/board-theme'
 import { isWxMiniGame } from '@/platform'
 import { wxCanvasFontFamily } from '@/wx/wx-canvas-text'
 import { WX_THEME } from '@/wx/wx-theme'
@@ -39,49 +45,23 @@ export interface SettingsHitRects {
   reset: Rect
 }
 
-const MODAL_PANEL_R = 20
-const MODAL_INNER_R = 14
+const MODAL_PANEL_R = 16
+const MODAL_THEME_LABEL_H = 28
 
 function settingsFont(size: number, weight = '400'): string {
   const family = isWxMiniGame() ? wxCanvasFontFamily() : '"PingFang SC", "Helvetica Neue", sans-serif'
   return `${weight} ${size}px ${family}`
 }
 
-function drawModalBackdrop(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-  ctx.fillStyle = 'rgba(0,0,0,0.72)'
-  ctx.fillRect(0, 0, w, h)
-  const vignette = ctx.createRadialGradient(w / 2, h * 0.42, w * 0.08, w / 2, h * 0.42, w * 0.72)
-  vignette.addColorStop(0, hexCss(WX_THEME.accent, 0.08))
-  vignette.addColorStop(1, 'rgba(0,0,0,0)')
-  ctx.fillStyle = vignette
-  ctx.fillRect(0, 0, w, h)
+function drawModalBackdropLayer(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  drawModalBackdrop(ctx, w, h)
 }
 
-function drawModalPanelShell(
-  ctx: CanvasRenderingContext2D,
-  panel: Rect,
-  accentGlowCy: number,
-): void {
-  const cx = panel.x + panel.w / 2
-  drawGlow(ctx, cx, accentGlowCy, panel.w * 0.62, WX_THEME.accent, 0.14)
-  drawGlow(ctx, cx, accentGlowCy, panel.w * 0.38, WX_THEME.accent2, 0.06)
-
-  ctx.fillStyle = hexCss(WX_THEME.surfaceStrong, 0.98)
+function drawModalPanelShell(ctx: CanvasRenderingContext2D, panel: Rect): void {
+  ctx.fillStyle = hexCss(WX_THEME.surfaceStrong, WX_THEME.surfaceStrongAlpha)
   roundRectPath(ctx, panel.x, panel.y, panel.w, panel.h, MODAL_PANEL_R)
   ctx.fill()
-
-  ctx.save()
-  roundRectPath(ctx, panel.x, panel.y, panel.w, panel.h, MODAL_PANEL_R)
-  ctx.clip()
-  const accentBar = ctx.createLinearGradient(panel.x, panel.y, panel.x + panel.w, panel.y)
-  accentBar.addColorStop(0, hexCss(WX_THEME.accent, 0.55))
-  accentBar.addColorStop(0.5, hexCss(WX_THEME.accent2, 0.45))
-  accentBar.addColorStop(1, hexCss(WX_THEME.accent, 0.2))
-  ctx.fillStyle = accentBar
-  ctx.fillRect(panel.x, panel.y, panel.w, 3)
-  ctx.restore()
-
-  ctx.strokeStyle = hexCss(WX_THEME.accent, 0.34)
+  ctx.strokeStyle = hexCss(WX_THEME.border, WX_THEME.borderAlpha * 0.75)
   ctx.lineWidth = 1
   roundRectPath(ctx, panel.x, panel.y, panel.w, panel.h, MODAL_PANEL_R)
   ctx.stroke()
@@ -90,72 +70,63 @@ function drawModalPanelShell(
 function drawModalCloseButton(ctx: CanvasRenderingContext2D, rect: Rect): void {
   const cx = rect.x + rect.w / 2
   const cy = rect.y + rect.h / 2
-  const r = Math.min(rect.w, rect.h) / 2
 
-  ctx.fillStyle = 'rgba(255,255,255,0.06)'
-  ctx.beginPath()
-  ctx.arc(cx, cy, r, 0, Math.PI * 2)
+  ctx.fillStyle = hexCss(WX_THEME.glass, Math.min(1, WX_THEME.glassAlpha + 0.3))
+  roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, 8)
   ctx.fill()
-  ctx.strokeStyle = 'rgba(255,255,255,0.14)'
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.arc(cx, cy, r, 0, Math.PI * 2)
-  ctx.stroke()
 
   ctx.strokeStyle = hexCss(WX_THEME.textMuted)
-  ctx.lineWidth = 1.8
+  ctx.lineWidth = 1.6
   ctx.lineCap = 'round'
   ctx.beginPath()
-  ctx.moveTo(cx - 5, cy - 5)
-  ctx.lineTo(cx + 5, cy + 5)
-  ctx.moveTo(cx + 5, cy - 5)
-  ctx.lineTo(cx - 5, cy + 5)
+  ctx.moveTo(cx - 4, cy - 4)
+  ctx.lineTo(cx + 4, cy + 4)
+  ctx.moveTo(cx + 4, cy - 4)
+  ctx.lineTo(cx - 4, cy + 4)
   ctx.stroke()
 }
 
-function drawToggleChip(ctx: CanvasRenderingContext2D, rect: Rect, on: boolean): void {
-  const pillR = rect.h / 2
+function drawSoundSwitch(ctx: CanvasRenderingContext2D, rect: Rect, on: boolean): void {
+  const r = rect.h / 2
   if (on) {
-    fillHGradient(ctx, rect.x, rect.y, rect.w, rect.h, WX_THEME.accent, WX_THEME.accent2, pillR)
-    ctx.fillStyle = hexCss(WX_THEME.btnTextDark)
+    const grad = ctx.createLinearGradient(rect.x, rect.y, rect.x + rect.w, rect.y)
+    grad.addColorStop(0, hexCss(WX_THEME.accent))
+    grad.addColorStop(1, hexCss(WX_THEME.accent2))
+    ctx.fillStyle = grad
   } else {
-    ctx.fillStyle = hexCss(WX_THEME.glass, 0.06)
-    roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, pillR)
-    ctx.fill()
-    ctx.strokeStyle = hexCss(WX_THEME.glassBorder, 0.16)
+    ctx.fillStyle = hexCss(WX_THEME.glass, Math.min(1, WX_THEME.glassAlpha + 0.45))
+  }
+  roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, r)
+  ctx.fill()
+  if (!on) {
+    ctx.strokeStyle = hexCss(WX_THEME.border, 0.2)
     ctx.lineWidth = 1
-    roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, pillR)
+    roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, r)
     ctx.stroke()
-    ctx.fillStyle = hexCss(WX_THEME.textMuted)
   }
 
-  ctx.font = settingsFont(14, '600')
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(on ? '开' : '关', rect.x + rect.w / 2, rect.y + rect.h / 2)
+  const thumbR = rect.h / 2 - 3
+  const thumbCx = on ? rect.x + rect.w - 3 - thumbR : rect.x + 3 + thumbR
+  const thumbCy = rect.y + rect.h / 2
+  ctx.fillStyle = '#ffffff'
+  ctx.beginPath()
+  ctx.arc(thumbCx, thumbCy, thumbR, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.shadowColor = 'rgba(0,0,0,0.2)'
+  ctx.shadowBlur = 2
+  ctx.shadowOffsetY = 1
+  ctx.fill()
+  ctx.shadowColor = 'transparent'
+  ctx.shadowBlur = 0
+  ctx.shadowOffsetY = 0
 }
 
-function drawSettingsModalHeader(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  panelY: number,
-  titleBlock: number,
-): void {
-  const iconCy = panelY + titleBlock / 2
-  const iconR = 24
-  const iconGrad = ctx.createLinearGradient(cx - iconR, iconCy - iconR, cx + iconR, iconCy + iconR)
-  iconGrad.addColorStop(0, hexCss(WX_THEME.accent, 0.18))
-  iconGrad.addColorStop(1, hexCss(WX_THEME.accent2, 0.1))
-  ctx.fillStyle = iconGrad
-  ctx.beginPath()
-  ctx.arc(cx, iconCy, iconR, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.strokeStyle = hexCss(WX_THEME.accent, 0.32)
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.arc(cx, iconCy, iconR, 0, Math.PI * 2)
-  ctx.stroke()
-  drawGameIcon2d(ctx, 'settings', cx, iconCy, 22, WX_THEME.accent)
+function drawModalTitle(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  ctx.font = settingsFont(17, '700')
+  ctx.fillStyle = hexCss(WX_THEME.text)
+  ctx.fillText('设置', x, y)
 }
 
 function fillDiagIcon(
@@ -304,7 +275,7 @@ function drawRowLabels(
 }
 
 function drawRowDivider(ctx: CanvasRenderingContext2D, x: number, y: number, w: number): void {
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)'
+  ctx.strokeStyle = hexCss(WX_THEME.border, WX_THEME.borderAlpha * 0.45)
   ctx.lineWidth = 1
   ctx.beginPath()
   ctx.moveTo(x, y)
@@ -318,15 +289,19 @@ function drawActionChip(
   label: string,
   danger = false,
 ): void {
-  ctx.fillStyle = danger ? 'rgba(255,77,109,0.12)' : 'rgba(255,255,255,0.06)'
+  ctx.fillStyle = danger
+    ? hexCss(WX_THEME.danger, 0.12)
+    : hexCss(WX_THEME.glass, Math.min(1, WX_THEME.glassAlpha + 0.06))
   roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, 10)
   ctx.fill()
-  ctx.strokeStyle = danger ? 'rgba(255,77,109,0.35)' : 'rgba(255,255,255,0.12)'
+  ctx.strokeStyle = danger
+    ? hexCss(WX_THEME.danger, 0.35)
+    : hexCss(WX_THEME.border, WX_THEME.borderAlpha * 0.55)
   ctx.lineWidth = 1
   roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, 10)
   ctx.stroke()
 
-  ctx.fillStyle = danger ? '#ff8caa' : hexCss(WX_THEME.text)
+  ctx.fillStyle = danger ? hexCss(WX_THEME.danger) : hexCss(WX_THEME.text)
   ctx.font = '600 14px "PingFang SC", "Helvetica Neue", sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
@@ -351,51 +326,36 @@ export function drawSettingsModalVisual(
   h: number,
   state: SettingsModalVisualState,
 ): { layout: SettingsModalLayout; hits: SettingsModalHitRects } {
-  drawModalBackdrop(ctx, w, h)
+  drawModalBackdropLayer(ctx, w, h)
 
   const layout = computeSettingsModalLayout(w, h)
   const { panel } = layout
-  const cx = w / 2
-  const modalCy = panel.y + panel.h / 2
+  const pad = 16
+  const boardThemeIndex = normalizeBoardThemeIndex(state.boardThemeIndex)
 
-  drawModalPanelShell(ctx, panel, modalCy)
-  drawSettingsModalHeader(ctx, cx, panel.y, layout.titleBlock)
+  drawModalPanelShell(ctx, panel)
+  drawModalTitle(ctx, panel.x + pad, layout.titleY)
   drawModalCloseButton(ctx, layout.close)
 
-  const innerX = panel.x + 14
-  const innerY = panel.y + layout.titleBlock + 6
-  const innerW = panel.w - 28
-  const innerH = panel.h - layout.titleBlock - 14
-  ctx.fillStyle = hexCss(WX_THEME.glass, 0.04)
-  roundRectPath(ctx, innerX, innerY, innerW, innerH, MODAL_INNER_R)
-  ctx.fill()
-  ctx.strokeStyle = hexCss(WX_THEME.glassBorder, 0.1)
-  ctx.lineWidth = 1
-  roundRectPath(ctx, innerX, innerY, innerW, innerH, MODAL_INNER_R)
-  ctx.stroke()
-
   const soundCy = settingsRowCenterY(layout.soundRow.y)
-  fillDiagIcon(ctx, layout.rowIconX, soundCy, 40, WX_THEME.accent, WX_THEME.accent2)
-  drawSettingsIcon(
-    ctx,
-    layout.rowIconX,
-    soundCy,
-    20,
-    state.soundEnabled ? 'sound-on' : 'sound-off',
-  )
   drawRowLabels(ctx, layout.rowTitleX, soundCy, '音效', '点击与通关反馈')
-  drawToggleChip(ctx, layout.soundToggle, state.soundEnabled)
+  drawSoundSwitch(ctx, layout.soundToggle, state.soundEnabled)
 
-  const rowInnerX = innerX + 4
-  const rowInnerW = innerW - 8
-  drawRowDivider(ctx, rowInnerX, layout.soundRow.y + ROW_H, rowInnerW)
+  const dividerX = panel.x + pad
+  const dividerW = panel.w - pad * 2
+  drawRowDivider(ctx, dividerX, layout.soundRow.y + ROW_H, dividerW)
 
-  const themeCy = layout.themeRowY + 22
-  const activeTheme = getBoardTheme(state.boardThemeIndex)
-  fillDiagIcon(ctx, layout.rowIconX, themeCy, 40, WX_THEME.accent, WX_THEME.gradientBlueEnd)
-  drawThemePaletteIcon(ctx, layout.rowIconX, themeCy, activeTheme)
-  drawRowLabels(ctx, layout.rowTitleX, themeCy, '棋盘样式', `当前：${activeTheme.label}`)
-  drawThemeSwatches(ctx, layout.themeSwatches, state.boardThemeIndex)
+  const themeLabelCy = layout.themeRowY + MODAL_THEME_LABEL_H / 2
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  ctx.font = settingsFont(15, '600')
+  ctx.fillStyle = hexCss(WX_THEME.text)
+  ctx.fillText('棋盘样式', layout.rowTitleX, themeLabelCy - 8)
+  ctx.font = settingsFont(12)
+  ctx.fillStyle = hexCss(WX_THEME.textMuted)
+  ctx.fillText(getBoardTheme(boardThemeIndex).label, layout.rowTitleX, themeLabelCy + 10)
+
+  drawThemeSwatches(ctx, layout.themeSwatches, boardThemeIndex)
 
   return {
     layout,
@@ -530,43 +490,58 @@ function drawThemeSwatches(
   swatches: Rect[],
   activeIndex: number,
 ): void {
+  const selectedIndex = normalizeBoardThemeIndex(activeIndex)
   BOARD_THEMES.forEach((theme, i) => {
     const rect = swatches[i]
     if (!rect) return
-    const selected = i === activeIndex
-    const cx = rect.x + rect.w / 2
-    const cy = rect.y + rect.h / 2
-
-    if (selected) {
-      drawGlow(ctx, cx, cy, rect.w * 0.78, WX_THEME.accent, 0.22)
-    }
+    const selected = i === selectedIndex
 
     ctx.fillStyle = boardThemeFrameCss(theme)
-    roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, 10)
+    roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h - 14, UI_BTN.ghostRadius)
     ctx.fill()
     if (boardThemeHasChromeSplit(theme)) {
-      const inset = 5
+      const inset = 4
       ctx.fillStyle = theme.cssBg
-      roundRectPath(ctx, rect.x + inset, rect.y + inset, rect.w - inset * 2, rect.h * 0.4, 6)
+      roundRectPath(ctx, rect.x + inset, rect.y + inset, rect.w - inset * 2, (rect.h - 14) * 0.42, 4)
       ctx.fill()
     }
-    ctx.strokeStyle = selected ? hexCss(WX_THEME.accent, 0.95) : 'rgba(255,255,255,0.14)'
-    ctx.lineWidth = selected ? 2 : 1
-    roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, 10)
-    ctx.stroke()
 
-    const pathW = Math.max(12, rect.w * 0.58)
-    const pathH = 4
-    const pathX = rect.x + (rect.w - pathW) / 2
-    const pathY = rect.y + rect.h / 2 - pathH / 2 - 4
+    const pathW = Math.max(10, rect.w * 0.5)
+    const pathH = 3
     ctx.fillStyle = boardThemePathCss(theme)
-    roundRectPath(ctx, pathX, pathY, pathW, pathH, 2)
+    roundRectPath(
+      ctx,
+      rect.x + (rect.w - pathW) / 2,
+      rect.y + (rect.h - 14) / 2 - pathH / 2 - 2,
+      pathW,
+      pathH,
+      2,
+    )
     ctx.fill()
 
+    ctx.strokeStyle = selected ? hexCss(WX_THEME.accent, 0.9) : hexCss(WX_THEME.border, 0.22)
+    ctx.lineWidth = selected ? 1.5 : 1
+    roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h - 14, UI_BTN.ghostRadius)
+    ctx.stroke()
+
+    if (selected) {
+      const bx = rect.x + rect.w - 10
+      const by = rect.y + 8
+      ctx.fillStyle = hexCss(WX_THEME.accent)
+      ctx.beginPath()
+      ctx.arc(bx, by, 7, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = hexCss(WX_THEME.btnTextDark)
+      ctx.font = settingsFont(9, '800')
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('✓', bx, by + 0.5)
+    }
+
     ctx.fillStyle = selected ? hexCss(WX_THEME.text) : hexCss(WX_THEME.textMuted)
-    ctx.font = settingsFont(11, '600')
+    ctx.font = settingsFont(11, selected ? '600' : '500')
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
-    ctx.fillText(theme.label, rect.x + rect.w / 2, rect.y + rect.h - 16)
+    ctx.fillText(theme.label, rect.x + rect.w / 2, rect.y + rect.h - 12)
   })
 }

@@ -45,7 +45,7 @@ function enterCustom() {
   <main class="dev-levels">
     <header class="topbar">
       <button class="icon-btn ui-tap" type="button" aria-label="返回" @click="goBack">
-        <GameIcon name="back" :size="18" color="#fff" />
+        <GameIcon name="back" :size="18" class="icon-muted" />
       </button>
       <h1>选关测试</h1>
       <span />
@@ -152,6 +152,10 @@ function enterCustom() {
   cursor: pointer;
 }
 
+.icon-muted {
+  color: var(--game-text-muted);
+}
+
 .panel {
   margin-bottom: 14px;
   padding: 14px;
@@ -185,8 +189,8 @@ function enterCustom() {
   min-width: 0;
   padding: 10px 12px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid color-mix(in srgb, var(--game-border) 65%, transparent);
+  background: var(--game-surface);
   color: var(--game-text);
   font-size: 16px;
 }
@@ -194,8 +198,8 @@ function enterCustom() {
 .enter-btn,
 .level-btn,
 .jump-btn {
-  border: 1px solid rgba(77, 238, 234, 0.35);
-  background: rgba(77, 238, 234, 0.12);
+  border: 1px solid color-mix(in srgb, var(--game-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--game-accent) 10%, transparent);
   color: var(--game-text);
   cursor: pointer;
   border-radius: 10px;
@@ -219,7 +223,7 @@ function enterCustom() {
 }
 
 .editor-entry {
-  border-color: rgba(126, 242, 154, 0.25);
+  border-color: color-mix(in srgb, var(--game-accent-2) 25%, transparent);
 }
 
 .grid {

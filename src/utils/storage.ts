@@ -1,4 +1,11 @@
 import type { DailyChallengeState, GameSettings, SaveData } from '@/game-core/types'
+import {
+  BOARD_THEME_PACK_VERSION,
+  DEFAULT_BOARD_THEME_INDEX,
+  migrateBoardThemeIndexFromV1,
+  migrateBoardThemeIndexFromV2,
+  normalizeBoardThemeIndex,
+} from '@/game/board-theme'
 import { dailySeed, todayDateString } from '@/game-core/random'
 import { defaultDailySignInState, normalizeDailySignInState } from '@/game/daily-sign-in'
 import { INITIAL_ASSISTS, INITIAL_HINTS } from '@/game/game-ui-content'
@@ -33,11 +40,43 @@ export function defaultSaveData(): SaveData {
     completedLevels: [],
     dailyChallenge: defaultDailyChallenge(),
     dailySignIn: defaultDailySignInState(),
-    settings: { soundEnabled: true, boardThemeIndex: 0 },
+    settings: {
+      soundEnabled: true,
+      boardThemeIndex: DEFAULT_BOARD_THEME_INDEX,
+      themePackVersion: BOARD_THEME_PACK_VERSION,
+    },
     tutorialDone: false,
     winStreak: 0,
     hintsRemaining: INITIAL_HINTS,
     assistsRemaining: INITIAL_ASSISTS,
+  }
+}
+
+function normalizeSettings(raw: GameSettings | undefined, defaults: GameSettings): GameSettings {
+  const merged = { ...defaults, ...raw }
+  if (merged.themePackVersion === BOARD_THEME_PACK_VERSION) {
+    return {
+      ...merged,
+      boardThemeIndex: normalizeBoardThemeIndex(
+        merged.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX,
+      ),
+    }
+  }
+  if (merged.themePackVersion === 2) {
+    return {
+      ...merged,
+      boardThemeIndex: migrateBoardThemeIndexFromV2(
+        merged.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX,
+      ),
+      themePackVersion: BOARD_THEME_PACK_VERSION,
+    }
+  }
+  return {
+    ...merged,
+    boardThemeIndex: migrateBoardThemeIndexFromV1(
+      merged.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX,
+    ),
+    themePackVersion: BOARD_THEME_PACK_VERSION,
   }
 }
 
@@ -64,7 +103,7 @@ export function loadSaveData(): SaveData {
       completedLevels: parsed.completedLevels ?? defaults.completedLevels,
       dailyChallenge: normalizeDailyChallenge(parsed.dailyChallenge),
       dailySignIn: normalizeDailySignInState(parsed.dailySignIn),
-      settings: { ...defaults.settings, ...parsed.settings },
+      settings: normalizeSettings(parsed.settings, defaults.settings),
       tutorialDone: parsed.tutorialDone ?? defaults.tutorialDone,
       winStreak: parsed.winStreak ?? defaults.winStreak,
       hintsRemaining: normalizeConsumableCount(parsed.hintsRemaining, defaults.hintsRemaining),

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import GameIcon from '@/components/icons/GameIcon.vue'
 import {
   BOARD_THEMES,
   boardThemeFrameCss,
   boardThemeHasChromeSplit,
   boardThemePathCss,
+  DEFAULT_BOARD_THEME_INDEX,
   getBoardTheme,
   normalizeBoardThemeIndex,
 } from '@/game/board-theme'
@@ -20,7 +20,7 @@ const emit = defineEmits<{
 const progress = useProgressStore()
 
 const boardThemeIndex = computed(() =>
-  normalizeBoardThemeIndex(progress.settings.boardThemeIndex ?? 0),
+  normalizeBoardThemeIndex(progress.settings.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX),
 )
 const activeTheme = computed(() => getBoardTheme(boardThemeIndex.value))
 
@@ -35,44 +35,34 @@ function selectBoardTheme(index: number) {
 <template>
   <div class="overlay" @click.self="emit('close')">
     <div class="modal ui-pop-in">
-      <button class="close ui-tap" type="button" aria-label="关闭" @click="emit('close')">
-        ×
-      </button>
+      <header class="modal-head">
+        <h2 class="modal-title">设置</h2>
+        <button class="close ui-tap" type="button" aria-label="关闭" @click="emit('close')">
+          ×
+        </button>
+      </header>
 
-      <div class="header">
-        <span class="header-icon">
-          <GameIcon name="settings" :size="22" :color="'var(--game-accent)'" />
-        </span>
+      <div class="row sound-row">
+        <div class="row-copy">
+          <p class="row-title">音效</p>
+          <p class="row-desc">点击与通关反馈</p>
+        </div>
+        <button
+          class="switch ui-tap"
+          type="button"
+          role="switch"
+          :aria-checked="progress.soundEnabled"
+          :class="{ on: progress.soundEnabled }"
+          @click="progress.toggleSound()"
+        >
+          <span class="switch-thumb" />
+        </button>
       </div>
 
-      <div class="panel">
-        <div class="row">
-          <span class="row-icon cyan">
-            <GameIcon
-              :name="progress.soundEnabled ? 'sound-on' : 'sound-off'"
-              :size="18"
-              color="#fff"
-            />
-          </span>
-          <div class="row-copy">
-            <p class="row-title">音效</p>
-            <p class="row-desc">点击与通关反馈</p>
-          </div>
-          <button class="toggle ui-tap" type="button" @click="progress.toggleSound()">
-            {{ progress.soundEnabled ? '开' : '关' }}
-          </button>
-        </div>
-
-        <div class="divider" />
-
-        <div class="row theme-row">
-          <span class="row-icon violet">
-            <GameIcon name="sparkle" :size="18" color="#fff" />
-          </span>
-          <div class="row-copy">
-            <p class="row-title">棋盘样式</p>
-            <p class="row-desc">当前：{{ activeTheme.label }}</p>
-          </div>
+      <div class="section">
+        <div class="section-head">
+          <p class="section-title">棋盘样式</p>
+          <p class="section-desc">{{ activeTheme.label }}</p>
         </div>
         <div class="theme-grid">
           <button
@@ -92,6 +82,7 @@ function selectBoardTheme(index: number) {
                 :style="{ background: theme.cssBg }"
               />
               <span class="theme-chip-path" :style="{ background: boardThemePathCss(theme) }" />
+              <span v-if="boardThemeIndex === index" class="theme-chip-check">✓</span>
             </span>
             <span class="theme-chip-label">{{ theme.label }}</span>
           </button>
@@ -105,88 +96,61 @@ function selectBoardTheme(index: number) {
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.72);
+  background: var(--game-overlay, rgba(28, 36, 48, 0.4));
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 35;
   padding: 24px;
+  backdrop-filter: blur(4px);
 }
 
 .modal {
   position: relative;
   width: 100%;
-  max-width: 360px;
-  padding: 24px 20px 20px;
-  border-radius: 20px;
-  border: 1px solid color-mix(in srgb, var(--game-accent) 32%, transparent);
+  max-width: 340px;
+  padding: 0 16px 16px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--game-border) 75%, transparent);
   background: var(--game-surface-strong);
   color: var(--game-text);
-  box-shadow: var(--game-glow), var(--game-shadow);
-  backdrop-filter: blur(12px);
+  box-shadow: var(--game-shadow);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 4px 0;
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .close {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: none;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--game-glass) 50%, transparent);
   color: var(--game-text-muted);
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
   cursor: pointer;
 }
 
-.header {
-  text-align: center;
-  margin-bottom: 12px;
-}
-
-.header-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--game-accent) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--game-accent) 28%, transparent);
-}
-
-.panel {
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.row {
+.sound-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-}
-
-.row-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.row-icon.cyan {
-  background: linear-gradient(135deg, var(--game-accent), var(--game-accent-2));
-}
-
-.row-icon.violet {
-  background: linear-gradient(135deg, var(--game-accent), var(--game-accent-2));
-  opacity: 0.92;
+  padding: 12px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--game-border) 45%, transparent);
 }
 
 .row-copy {
@@ -206,32 +170,65 @@ function selectBoardTheme(index: number) {
   color: var(--game-text-muted);
 }
 
-.toggle {
-  min-width: 64px;
-  padding: 8px 14px;
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 48px;
+  height: 28px;
+  padding: 0;
   border: none;
-  border-radius: 999px;
-  background: var(--game-gradient);
-  color: var(--game-bg);
-  font-size: 14px;
-  font-weight: 600;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--game-glass) 80%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--game-border) 50%, transparent);
   cursor: pointer;
+  transition: background 0.2s ease;
 }
 
-.divider {
-  height: 1px;
-  margin: 14px 0;
-  background: rgba(255, 255, 255, 0.06);
+.switch.on {
+  background: var(--game-gradient);
+  box-shadow: none;
 }
 
-.theme-row {
-  margin-bottom: 12px;
+.switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+  transition: transform 0.2s ease;
+}
+
+.switch.on .switch-thumb {
+  transform: translateX(20px);
+}
+
+.section {
+  padding-top: 14px;
+}
+
+.section-head {
+  margin-bottom: 10px;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.section-desc {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--game-text-muted);
 }
 
 .theme-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .theme-chip {
@@ -244,15 +241,16 @@ function selectBoardTheme(index: number) {
 .theme-chip-bg {
   display: block;
   position: relative;
-  height: 48px;
-  border-radius: 12px;
+  height: 44px;
+  border-radius: 10px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid color-mix(in srgb, var(--game-border) 55%, transparent);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .theme-chip.active .theme-chip-bg {
   border-color: var(--game-accent);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--game-accent) 35%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--game-accent) 40%, transparent);
 }
 
 .theme-chip-board {
@@ -261,29 +259,45 @@ function selectBoardTheme(index: number) {
   right: 4px;
   top: 4px;
   height: 42%;
-  border-radius: 5px;
+  border-radius: 4px;
 }
 
 .theme-chip-path {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 55%;
+  width: 52%;
   height: 3px;
   transform: translate(-50%, -50%);
   border-radius: 2px;
 }
 
+.theme-chip-check {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--game-accent);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+}
+
 .theme-chip-label {
   display: block;
-  margin-top: 6px;
+  margin-top: 5px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--game-text-muted);
   text-align: center;
 }
 
 .theme-chip.active .theme-chip-label {
   color: var(--game-text);
+  font-weight: 600;
 }
 </style>

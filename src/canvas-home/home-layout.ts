@@ -84,7 +84,7 @@ function layoutChips(
   return { chips, chipIconX, chipTextX }
 }
 
-/** badge → title → subtitle → preview → card → chips → start */
+/** badge → title → subtitle → preview → card → start → chips */
 function computeHomeLayoutAtScale(
   screenW: number,
   safeTop: number,
@@ -141,15 +141,13 @@ function computeHomeLayoutAtScale(
 
   y += cardH + HOME_CSS.cardMb * s
 
-  const { chips, chipIconX, chipTextX } = layoutChips(screenW, y, s, measure)
-  y += HOME_CSS.chipLine * s + HOME_CSS.chipRowMb * s
-
   const startW = Math.min(HOME_CSS.btnMaxW * s, contentW)
   const startH = HOME_CSS.btnLine * s
   const start: Rect = { x: (screenW - startW) / 2, y, w: startW, h: startH }
+  const startTextX = start.x + startW / 2
+  y += startH + HOME_CSS.startMb * s
 
-  const startIconX = start.x + startW / 2 - 42 * s
-  const startTextX = start.x + startW / 2 + 12 * s
+  const { chips, chipIconX, chipTextX } = layoutChips(screenW, y, s, measure)
 
   return {
     s,
@@ -170,7 +168,7 @@ function computeHomeLayoutAtScale(
     chipIconX,
     chipTextX,
     start,
-    startIconX,
+    startIconX: startTextX,
     startTextX,
   }
 }
@@ -186,7 +184,11 @@ export function computeHomeLayout(
   let layout = computeHomeLayoutAtScale(screenW, safeTop, s, measure)
 
   if (screenH !== undefined && screenH > 0) {
-    const contentBottom = layout.start.y + layout.start.h + HOME_CSS.padBottom * s
+    const lastChip = layout.chips[layout.chips.length - 1]
+    const contentBottom =
+      (lastChip?.y ?? layout.start.y) +
+      (lastChip?.h ?? layout.start.h) +
+      HOME_CSS.padBottom * s
     const available = screenH - safeBottom
     if (contentBottom > available) {
       s *= available / contentBottom

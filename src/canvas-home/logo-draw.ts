@@ -1,10 +1,10 @@
 import { drawGlow, drawStripes, hexCss } from '@/canvas-home/canvas2d-primitives'
 import { drawPreviewPathSolid } from '@/canvas-home/preview-path-draw'
-import { getBoardTheme } from '@/game/board-theme'
+import { getBoardTheme, DEFAULT_BOARD_THEME_INDEX } from '@/game/board-theme'
 
 /** 微信提审 Logo — 与首页 preview 路径、主题色一致 */
 export function drawLogo2d(ctx: CanvasRenderingContext2D, size: number): void {
-  const theme = getBoardTheme(0).wx
+  const theme = getBoardTheme(DEFAULT_BOARD_THEME_INDEX).wx
   ctx.fillStyle = hexCss(theme.bg)
   ctx.fillRect(0, 0, size, size)
   drawStripes(ctx, size, size)

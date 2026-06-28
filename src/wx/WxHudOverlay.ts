@@ -2,17 +2,20 @@ import { Container, Graphics, Text, type TextStyle } from 'pixi.js'
 import { WxCanvasText, wxTextStyle, wxCanvasTextBlockHeight, wxCanvasTextEstimateWidth } from './wx-canvas-text'
 import type { FailReason, GameOverlay } from '@/game/GameController'
 import { isWxMiniGame, getPlatform } from '@/platform'
-import { GAME_HUD, FAIL_COPY, BOARD_ZOOM_MIN, BOARD_ZOOM_MAX, BOARD_ZOOM_STEP, pathToolColumnHeight, hudPauseLeft, hudSettingsLeft, hudSettingsIconSize } from '@/game/game-ui-content'
+import { GAME_HUD, FAIL_COPY, BOARD_ZOOM_MIN, BOARD_ZOOM_MAX, BOARD_ZOOM_STEP, pathToolColumnHeight, hudPauseLeft, hudPauseIconSize, hudSettingsLeft, hudSettingsIconSize } from '@/game/game-ui-content'
 import { formatLevelTime } from '@/game-core/level-timer'
 import {
   boardThemeFrameText,
   boardThemeHasChromeSplit,
+  DEFAULT_BOARD_THEME_INDEX,
   getBoardTheme,
+  type BoardTheme,
 } from '@/game/board-theme'
 import {
   drawGlow,
-  drawHeart,
   drawDiagGradientCircle,
+  BADGE_WARM_END,
+  BADGE_WARM_START,
   drawGradientBadge,
   drawVerticalGradientRect,
   drawHudGlassBar,
@@ -20,8 +23,9 @@ import {
   type Rect,
 } from './wx-draw'
 import { drawWxGameIcon, drawZoomMagnifierStep } from './wx-game-icons'
+import { WxCanvasHearts, WxCanvasIcon } from './wx-canvas-icon'
 import { drawWxButtonPressHighlight, type WxButtonPressShape } from './wx-button-press'
-import { WX_THEME } from './wx-theme'
+import { WX_THEME, WX_THEME_INDEX } from './wx-theme'
 import { WxPauseCanvasLayer } from './WxPauseCanvasLayer'
 import { WxGameModalCanvasLayer } from './WxGameModalCanvasLayer'
 import { WxTutorialCanvasLayer } from './WxTutorialCanvasLayer'
@@ -73,11 +77,38 @@ export interface WxHudState {
   tutorialLevel: boolean
 }
 
+/** sRGB relative luminance — 区分蓝图（浅字）与信纸/原木（深字）chrome */
+function wxColorLuminance(c: number): number {
+  const channel = (v: number) => {
+    const s = v / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  const r = channel((c >> 16) & 0xff)
+  const g = channel((c >> 8) & 0xff)
+  const b = channel(c & 0xff)
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+function isLightChromeFrameText(theme: BoardTheme): boolean {
+  return wxColorLuminance(boardThemeFrameText(theme)) > 0.55
+}
+
+/** 路径风底栏缩放胶囊 — 对齐 Web `.zoom-pill--l1::before` */
+const PATH_BOTTOM_ZOOM_PILL_BG = 0x060910
+
 /** 微信小游戏 Canvas HUD（无 DOM） */
 export class WxHudOverlay extends Container {
   private readonly bgTop = new Graphics()
   /** 顶栏中部（关卡/倒计时/生命）— 与 pause/settings 分离，倒计时 tick 时不必整栏 clear */
   private readonly topCenterGfx = new Graphics()
+  /** 顶栏 pause/settings — Canvas2D 烘焙（Pixi Graphics 独立子层在真机不显示） */
+  private readonly pauseIconSprite = new WxCanvasIcon('pause')
+  private readonly settingsIconSprite = new WxCanvasIcon('settings')
+  /** 生命心形 — Canvas2D 烘焙 */
+  private readonly heartsSprite = new WxCanvasHearts()
+  /** 底栏 hint/assist — Canvas2D 烘焙（poly fill 会破坏 bgBottom 同批 fill） */
+  private readonly hintIconSprite = new WxCanvasIcon('hint')
+  private readonly assistIconSprite = new WxCanvasIcon('assist')
   private readonly bgBottom = new Graphics()
   /** 分享 toast 独立层，禁止画在 bgTop（否则清除 top 时易与计时器叠影） */
   private readonly shareToastGfx = new Graphics()
@@ -94,11 +125,11 @@ export class WxHudOverlay extends Container {
     padX: 4,
     padY: 2,
   })
-  private readonly hintBadgeText = new WxCanvasText('0', wxTextStyle(0x0a1220, 10, '800'), {
+  private readonly hintBadgeText = new WxCanvasText('0', wxTextStyle(WX_THEME.btnTextDark, 10, '800'), {
     padX: 0,
     padY: 0,
   })
-  private readonly assistBadgeText = new WxCanvasText('0', wxTextStyle(0x0a1220, 10, '800'), {
+  private readonly assistBadgeText = new WxCanvasText('0', wxTextStyle(WX_THEME.btnTextDark, 10, '800'), {
     padX: 0,
     padY: 0,
   })
@@ -178,6 +209,8 @@ export class WxHudOverlay extends Container {
     this.addChild(this.bgBottom)
     this.addChild(this.shareToastGfx)
     this.addChild(this.zoomDynamicGfx)
+    this.addChild(this.hintIconSprite)
+    this.addChild(this.assistIconSprite)
     this.hudTextLayer.addChild(this.levelCanvasText)
     this.hudTextLayer.addChild(this.timerCanvasText)
     this.hudTextLayer.addChild(this.hintBadgeText)
@@ -186,6 +219,9 @@ export class WxHudOverlay extends Container {
     this.hudTextLayer.addChild(this.assistLabelText)
     this.hudTextLayer.addChild(this.zoomBadgeText)
     this.addChild(this.hudTextLayer)
+    this.addChild(this.pauseIconSprite)
+    this.addChild(this.settingsIconSprite)
+    this.addChild(this.heartsSprite)
     this.addChild(this.errorText)
     this.addChild(this.modalContent)
     this.addChild(this.pauseCanvasLayer)
@@ -244,6 +280,12 @@ export class WxHudOverlay extends Container {
 
   bindPauseTextureReady(onReady: () => void): void {
     this.pauseCanvasLayer.onTextureReady = () => {
+      const s = this.state
+      if (!s || s.loading || s.overlay !== 'pause') {
+        this.pauseCanvasLayer.visible = false
+        return
+      }
+      this.pauseCanvasLayer.visible = true
       const hits = this.pauseCanvasLayer.getHits()
       if (hits) {
         this.modalPrimaryRect = hits.primary
@@ -313,15 +355,39 @@ export class WxHudOverlay extends Container {
     return true
   }
 
-  /** 从后台恢复 — 重烘焙弹窗 Canvas 与 HUD 文字 */
+  /** 从后台恢复 — 保留纹理先上屏，再异步重烘焙 */
   recoverAfterBackground(): void {
-    this.pauseCanvasLayer.invalidateBakedTexture()
-    this.gameModalCanvasLayer.invalidateBakedTexture()
-    this.tutorialCanvasLayer.invalidateBakedTexture()
+    this.pauseCanvasLayer.requestTextureRefresh()
+    this.gameModalCanvasLayer.requestTextureRefresh()
+    this.tutorialCanvasLayer.requestTextureRefresh()
     this.clearShareToast()
     this.lastShareToastSig = ''
+    this.pauseIconSprite.requestTextureRefresh()
+    this.settingsIconSprite.requestTextureRefresh()
+    this.heartsSprite.requestTextureRefresh()
+    this.hintIconSprite.requestTextureRefresh()
+    this.assistIconSprite.requestTextureRefresh()
     void this.rebakeHudTexts()
     if (this.state) this.redraw()
+  }
+
+  /** 切换棋盘主题 — 失效弹窗 Canvas 烘焙并重绘 HUD 色 */
+  syncTheme(): void {
+    this.pauseCanvasLayer.requestTextureRefresh()
+    this.gameModalCanvasLayer.requestTextureRefresh()
+    this.tutorialCanvasLayer.invalidateBakedTexture()
+    this.pauseIconSprite.requestTextureRefresh()
+    this.settingsIconSprite.requestTextureRefresh()
+    this.heartsSprite.requestTextureRefresh()
+    this.hintIconSprite.requestTextureRefresh()
+    this.assistIconSprite.requestTextureRefresh()
+    if (this.state) {
+      // setBoardThemeIndex → syncThemePack 已更新 WX_THEME_INDEX，但 state 仍可能是旧索引
+      this.state = { ...this.state, boardThemeIndex: WX_THEME_INDEX }
+      this.lastTopSig = ''
+      this.lastBottomSig = ''
+      this.redraw()
+    }
   }
 
   /** 触摸点是否在 HUD 控件上（缩放条/提示/暂停等，不触发棋盘拖动） */
@@ -539,6 +605,12 @@ export class WxHudOverlay extends Container {
 
     if (!this.state) {
       this.bgTop.clear()
+      this.topCenterGfx.clear()
+      this.pauseIconSprite.visible = false
+      this.settingsIconSprite.visible = false
+      this.heartsSprite.visible = false
+      this.hintIconSprite.visible = false
+      this.assistIconSprite.visible = false
       this.bgBottom.clear()
       this.zoomDynamicGfx.clear()
       this.lastTopSig = ''
@@ -569,6 +641,9 @@ export class WxHudOverlay extends Container {
     if (topChanged) {
       this.bgTop.clear()
       this.topCenterGfx.clear()
+      this.pauseIconSprite.visible = false
+      this.settingsIconSprite.visible = false
+      this.heartsSprite.visible = false
       this.levelCanvasText.visible = false
       this.timerCanvasText.visible = false
       this.drawTopBar(hudTop, s)
@@ -579,6 +654,8 @@ export class WxHudOverlay extends Container {
     if (bottomChanged) {
       this.bgBottom.clear()
       this.zoomDynamicGfx.clear()
+      this.hintIconSprite.visible = false
+      this.assistIconSprite.visible = false
       this.hintBadgeText.visible = false
       this.assistBadgeText.visible = false
       this.hintLabelText.visible = false
@@ -599,6 +676,11 @@ export class WxHudOverlay extends Container {
   private redrawFull(s: WxHudState, modalOverlay: boolean): void {
     this.bgTop.clear()
     this.topCenterGfx.clear()
+    this.pauseIconSprite.visible = false
+    this.settingsIconSprite.visible = false
+    this.heartsSprite.visible = false
+    this.hintIconSprite.visible = false
+    this.assistIconSprite.visible = false
     this.bgBottom.clear()
     this.clearShareToast()
     this.zoomDynamicGfx.clear()
@@ -689,7 +771,7 @@ export class WxHudOverlay extends Container {
   }
 
   private topBarSignature(s: WxHudState): string {
-    return `${s.levelLabel}|${s.lives}|${s.isPathStyle}|${s.boardThemeIndex ?? 0}`
+    return `${s.levelLabel}|${s.lives}|${s.isPathStyle}|${s.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX}`
   }
 
   /** 倒计时每秒 tick — 只刷新中部，避免整栏 clear + 全量重烘焙 */
@@ -699,19 +781,18 @@ export class WxHudOverlay extends Container {
     this.lastTimerSec = sec
 
     const hudTop = this.safeTop + (s.isPathStyle ? GAME_HUD.pathTopPadding : GAME_HUD.topPadding)
-    this.topCenterGfx.clear()
-
-    const centerX = this.screenW / 2
     const pathStyle = s.isPathStyle
-    const theme = getBoardTheme(s.boardThemeIndex ?? 0)
+    const theme = getBoardTheme(s.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX)
     const chromeSplit = pathStyle && boardThemeHasChromeSplit(theme)
     const barH = pathStyle ? GAME_HUD.pathHudBarHeight : GAME_HUD.hudBarHeight
     const barY = hudTop
+    const centerX = this.screenW / 2
 
     if (pathStyle) {
-      this.drawPathTopCenter(centerX, barY + barH / 2, s, this.screenW, theme, chromeSplit)
+      this.updatePathTimerText(s, centerX, barY + barH / 2, theme, chromeSplit)
     } else {
-      this.drawClassicTopCenter(centerX, barY, barH, s)
+      this.topCenterGfx.clear()
+      this.updateClassicTimerBlock(s, centerX, barY, barH)
     }
 
     void this.timerCanvasText.ensureBaked().then(() => this.onHudTextReady?.())
@@ -724,7 +805,7 @@ export class WxHudOverlay extends Container {
 
   private drawTopBar(hudTop: number, s: WxHudState): void {
     const pathStyle = s.isPathStyle
-    const theme = getBoardTheme(s.boardThemeIndex ?? 0)
+    const theme = getBoardTheme(s.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX)
     const chromeSplit = pathStyle && boardThemeHasChromeSplit(theme)
     const barH = pathStyle ? GAME_HUD.pathHudBarHeight : GAME_HUD.hudBarHeight
     const barX = GAME_HUD.settingsLeft
@@ -745,7 +826,7 @@ export class WxHudOverlay extends Container {
       w: pauseBtnSize,
       h: pauseBtnSize,
     }
-    this.drawHudCircleButton(this.pauseRect, pathStyle, pauseBtnSize, true, chromeSplit, 'pause')
+    this.drawHudCircleButton(this.pauseRect, pathStyle, pauseBtnSize, true, theme, chromeSplit, 'pause')
 
     const settingsLeft = hudSettingsLeft(pathStyle)
     this.settingsRect = {
@@ -759,6 +840,7 @@ export class WxHudOverlay extends Container {
       pathStyle,
       settingsBtnSize,
       true,
+      theme,
       chromeSplit,
       'settings',
     )
@@ -789,6 +871,7 @@ export class WxHudOverlay extends Container {
 
     const heartSize = GAME_HUD.pathHeartSize
     const heartGap = GAME_HUD.pathHeartsGap
+    const centerGap = heartSize + heartGap
     const levelFont = GAME_HUD.pathLevelFontSize
     const timerFont = GAME_HUD.pathTimerFontSize
     const levelTextH = wxCanvasTextBlockHeight(levelFont, 2)
@@ -813,19 +896,14 @@ export class WxHudOverlay extends Container {
     y += levelTextH + rowGap
     const statusCy = y + statusRowH / 2
     const statusLeft = cx - statusW / 2
-    const heartStartX = statusLeft + heartSize / 2
-    for (let i = 0; i < 3; i++) {
-      const alive = i < s.lives
-      drawHeart(
-        this.topCenterGfx,
-        heartStartX + i * (heartSize + heartGap),
-        statusCy,
-        heartSize,
-        alive ? WX_THEME.danger : 0x4a5568,
-        alive ? 1 : 0.45,
-        alive,
-      )
-    }
+    this.heartsSprite.configure({
+      heartSize,
+      centerGap,
+      lives: s.lives,
+    })
+    this.heartsSprite.x = statusLeft + heartsW / 2
+    this.heartsSprite.y = statusCy
+    this.heartsSprite.visible = true
 
     this.timerCanvasText.visible = true
     this.timerCanvasText.text = timerLabel
@@ -875,20 +953,81 @@ export class WxHudOverlay extends Container {
     this.timerCanvasText.y = timerY + timerH / 2
 
     const heartY = timerY + timerH + gap + GAME_HUD.heartSize / 2
-    const heartGap = GAME_HUD.heartSize + GAME_HUD.heartsGap
-    const heartStartX = cx - heartGap
-    for (let i = 0; i < 3; i++) {
-      const alive = i < s.lives
-      drawHeart(
-        this.topCenterGfx,
-        heartStartX + i * heartGap,
-        heartY,
-        GAME_HUD.heartSize,
-        alive ? WX_THEME.danger : 0x4a5568,
-        alive ? 1 : 0.45,
-        alive,
-      )
-    }
+    const centerGap = GAME_HUD.heartSize + GAME_HUD.heartsGap
+    this.heartsSprite.configure({
+      heartSize: GAME_HUD.heartSize,
+      centerGap,
+      lives: s.lives,
+    })
+    this.heartsSprite.x = cx
+    this.heartsSprite.y = heartY
+    this.heartsSprite.visible = true
+  }
+
+  /** 路径风 — 仅更新倒计时文案（tick 时不重绘生命） */
+  private updatePathTimerText(
+    s: WxHudState,
+    cx: number,
+    cy: number,
+    theme: BoardTheme,
+    chromeSplit: boolean,
+  ): void {
+    const timerLabel = formatLevelTime(s.timeRemainingMs)
+    const urgent = s.timeRemainingMs <= 30_000
+    const mutedText = chromeSplit ? boardThemeFrameText(theme) : 0x8a96a8
+    const heartSize = GAME_HUD.pathHeartSize
+    const heartGap = GAME_HUD.pathHeartsGap
+    const centerGap = heartSize + heartGap
+    const levelFont = GAME_HUD.pathLevelFontSize
+    const timerFont = GAME_HUD.pathTimerFontSize
+    const levelTextH = wxCanvasTextBlockHeight(levelFont, 2)
+    const timerTextH = wxCanvasTextBlockHeight(timerFont, 2)
+    const statusGap = GAME_HUD.pathStatusGap
+    const statusRowH = Math.max(heartSize, timerTextH)
+    const rowGap = GAME_HUD.pathLevelHeartsGap
+    const timerW = wxCanvasTextEstimateWidth(timerLabel, timerFont, '600', 4)
+    const heartsW = heartSize * 3 + heartGap * 2
+    const statusW = heartsW + statusGap + timerW
+    const blockH = levelTextH + rowGap + statusRowH
+    const statusCy = cy - blockH / 2 + levelTextH + rowGap + statusRowH / 2
+    const statusLeft = cx - statusW / 2
+
+    this.timerCanvasText.visible = true
+    this.timerCanvasText.text = timerLabel
+    this.timerCanvasText.setFontSize(timerFont)
+    this.timerCanvasText.setFill(urgent ? 0xff6b8a : mutedText)
+    this.timerCanvasText.anchor.set(0, 0.5)
+    this.timerCanvasText.x = statusLeft + heartsW + statusGap
+    this.timerCanvasText.y = statusCy
+  }
+
+  /** 经典风 — 仅更新倒计时胶囊 + 文案（tick 时不重绘生命） */
+  private updateClassicTimerBlock(s: WxHudState, cx: number, barY: number, barH: number): void {
+    const timerLabel = formatLevelTime(s.timeRemainingMs)
+    const urgent = s.timeRemainingMs <= 30_000
+    const levelFont = GAME_HUD.levelFontSize
+    const levelTextH = wxCanvasTextBlockHeight(levelFont, 2)
+    const timerFont = 13
+    const timerH = GAME_HUD.timerHeight
+    const timerW = Math.max(
+      GAME_HUD.timerMinWidth,
+      wxCanvasTextEstimateWidth(timerLabel, timerFont, '600', 4),
+    )
+    const heartsBlockH = GAME_HUD.heartSize
+    const gap = 4
+    const blockH = levelTextH + gap + timerH + gap + heartsBlockH
+    const topY = barY + (barH - blockH) / 2
+    const timerX = cx - timerW / 2
+    const timerY = topY + levelTextH + gap
+
+    this.drawInlineTimerPill(timerX, timerY, timerW, timerH, urgent, false)
+    this.timerCanvasText.visible = true
+    this.timerCanvasText.text = timerLabel
+    this.timerCanvasText.setFontSize(timerFont)
+    this.timerCanvasText.setFill(urgent ? 0xff6b8a : 0xc8d4e8)
+    this.timerCanvasText.anchor.set(0.5, 0.5)
+    this.timerCanvasText.x = cx
+    this.timerCanvasText.y = timerY + timerH / 2
   }
 
   private drawInlineTimerPill(
@@ -913,6 +1052,11 @@ export class WxHudOverlay extends Container {
 
   private async rebakeHudTexts(): Promise<void> {
     const tasks = [this.levelCanvasText.ensureBaked(), this.timerCanvasText.ensureBaked()]
+    if (this.pauseIconSprite.visible) tasks.push(this.pauseIconSprite.ensureBaked())
+    if (this.settingsIconSprite.visible) tasks.push(this.settingsIconSprite.ensureBaked())
+    if (this.heartsSprite.visible) tasks.push(this.heartsSprite.ensureBaked())
+    if (this.hintIconSprite.visible) tasks.push(this.hintIconSprite.ensureBaked())
+    if (this.assistIconSprite.visible) tasks.push(this.assistIconSprite.ensureBaked())
     if (this.hintBadgeText.visible) tasks.push(this.hintBadgeText.ensureBaked())
     if (this.assistBadgeText.visible) tasks.push(this.assistBadgeText.ensureBaked())
     if (this.hintLabelText.visible) tasks.push(this.hintLabelText.ensureBaked())
@@ -944,7 +1088,7 @@ export class WxHudOverlay extends Container {
       h: toolH,
     }
 
-    const theme = getBoardTheme(s.boardThemeIndex ?? 0)
+    const theme = getBoardTheme(s.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX)
     const chromeSplit = s.isPathStyle && boardThemeHasChromeSplit(theme)
 
     if (pathStyle) {
@@ -958,8 +1102,10 @@ export class WxHudOverlay extends Container {
         this.hintLabelText,
         this.hintBadgeText,
         chromeSplit,
+        false,
+        theme,
       )
-      this.drawPathZoomSlider(this.zoomRect, s, iconCy, chromeSplit)
+      this.drawPathZoomSlider(this.zoomRect, s, iconCy, chromeSplit, theme)
       this.drawPathLabeledTool(
         this.assistRect,
         'assist',
@@ -970,8 +1116,11 @@ export class WxHudOverlay extends Container {
         this.assistBadgeText,
         chromeSplit,
         s.assistOn,
+        theme,
       )
     } else {
+      this.hintIconSprite.visible = false
+      this.assistIconSprite.visible = false
       this.drawClassicTool(this.hintRect, s)
       this.drawClassicZoom(s)
       this.drawClassicAssistTool(this.assistRect, s)
@@ -989,21 +1138,23 @@ export class WxHudOverlay extends Container {
     badgeText: WxCanvasText,
     chromeSplit = false,
     active = false,
+    theme: BoardTheme = getBoardTheme(DEFAULT_BOARD_THEME_INDEX),
   ): void {
     const iconR = GAME_HUD.pathToolIconSize / 2
     const iconCx = rect.x + rect.w / 2
     const iconCy = rect.y + GAME_HUD.pathToolTopPadding + iconR
     const iconFillAlpha = chromeSplit ? 0.22 : 0.1
     const iconStrokeAlpha = chromeSplit ? 0.32 : 0.12
+    const ringColor = iconName === 'assist' ? 0xffb703 : chromeSplit ? 0xffffff : theme.wx.accent
+    const ringAlpha = active ? 0.55 : chromeSplit ? 0.38 : 0.28
 
     this.bgBottom.circle(iconCx, iconCy, iconR).fill({ color: 0xffffff, alpha: iconFillAlpha })
     this.bgBottom.circle(iconCx, iconCy, iconR).stroke({ width: 1, color: 0xffffff, alpha: iconStrokeAlpha })
     this.bgBottom.circle(iconCx, iconCy, iconR + 1).stroke({
       width: 2,
-      color: iconName === 'assist' ? 0xffb703 : 0xffffff,
-      alpha: active ? 0.55 : chromeSplit ? 0.38 : 0.28,
+      color: ringColor,
+      alpha: ringAlpha,
     })
-    drawWxGameIcon(this.bgBottom, iconName, iconCx, iconCy, 20, 0xffffff, 0.95)
 
     const badgeLabel = count > 0 ? String(count) : canShare ? '+' : '0'
     this.drawNumericBadge(
@@ -1014,23 +1165,41 @@ export class WxHudOverlay extends Container {
       badgeText,
     )
 
+    const iconSprite = iconName === 'assist' ? this.assistIconSprite : this.hintIconSprite
+    iconSprite.configure(20, 0xffffff, 0.95)
+    iconSprite.x = iconCx
+    iconSprite.y = iconCy
+    iconSprite.visible = true
+
     labelText.text = label
     labelText.setFontSize(GAME_HUD.pathToolLabelFontSize)
-    labelText.setFill(chromeSplit ? 0xffffff : 0x8a96a8)
+    labelText.setFill(chromeSplit ? boardThemeFrameText(theme) : theme.wx.text)
     labelText.anchor.set(0.5, 0)
     labelText.x = iconCx
     labelText.y = iconCy + iconR + GAME_HUD.pathToolLabelGap
     labelText.visible = true
   }
 
-  private drawPathZoomSlider(rect: Rect, s: WxHudState, alignCy: number, chromeSplit = false): void {
+  private drawPathZoomSlider(
+    rect: Rect,
+    s: WxHudState,
+    alignCy: number,
+    chromeSplit = false,
+    theme: BoardTheme = getBoardTheme(DEFAULT_BOARD_THEME_INDEX),
+  ): void {
     const pillH = GAME_HUD.pathZoomPillHeight
     const pillY = alignCy - pillH / 2
-    this.paintZoomPillBar({ ...rect, y: pillY, h: pillH }, s, true, chromeSplit)
+    this.paintZoomPillBar({ ...rect, y: pillY, h: pillH }, s, true, chromeSplit, theme)
   }
 
   /** 胶囊缩放条：左 − / 中滑条 / 右 +（尽量撑满工具栏高度） */
-  private paintZoomPillBar(rect: Rect, s: WxHudState, pathStyle: boolean, chromeSplit = false): void {
+  private paintZoomPillBar(
+    rect: Rect,
+    s: WxHudState,
+    pathStyle: boolean,
+    chromeSplit = false,
+    theme: BoardTheme = getBoardTheme(DEFAULT_BOARD_THEME_INDEX),
+  ): void {
     const pillH = pathStyle ? GAME_HUD.pathZoomPillHeight : Math.max(44, rect.h - 2)
     const pillY = rect.y + (rect.h - pillH) / 2
     const pillR = pillH / 2
@@ -1038,13 +1207,23 @@ export class WxHudOverlay extends Container {
     this.zoomChromeSplit = chromeSplit
 
     if (pathStyle) {
-      this.bgBottom.roundRect(rect.x, pillY, rect.w, pillH, pillR).fill({
-        color: 0xffffff,
-        alpha: chromeSplit ? 0.22 : 0.06,
-      })
-      this.bgBottom
-        .roundRect(rect.x, pillY, rect.w, pillH, pillR)
-        .stroke({ width: 1, color: 0xffffff, alpha: chromeSplit ? 0.32 : 0.1 })
+      if (chromeSplit) {
+        this.bgBottom.roundRect(rect.x, pillY, rect.w, pillH, pillR).fill({
+          color: 0xffffff,
+          alpha: 0.22,
+        })
+        this.bgBottom
+          .roundRect(rect.x, pillY, rect.w, pillH, pillR)
+          .stroke({ width: 1, color: 0xffffff, alpha: 0.32 })
+      } else {
+        this.bgBottom.roundRect(rect.x, pillY, rect.w, pillH, pillR).fill({
+          color: PATH_BOTTOM_ZOOM_PILL_BG,
+          alpha: 0.98,
+        })
+        this.bgBottom
+          .roundRect(rect.x, pillY, rect.w, pillH, pillR)
+          .stroke({ width: 1, color: 0xffffff, alpha: 0.04 })
+      }
 
       const padX = GAME_HUD.pathZoomPillPadX
       const iconSize = GAME_HUD.pathZoomStepIconSize
@@ -1057,8 +1236,9 @@ export class WxHudOverlay extends Container {
       const trackX = rect.x + stepInset
       const trackW = Math.max(12, rect.w - stepInset * 2)
 
-      this.drawZoomStepGlyph(minusCx, trackY, true, 0xffffff, iconSize)
-      this.drawZoomStepGlyph(plusCx, trackY, false, 0xffffff, iconSize)
+      const zoomGlyphColor = chromeSplit ? boardThemeFrameText(theme) : 0xffffff
+      this.drawZoomStepGlyph(minusCx, trackY, true, zoomGlyphColor, iconSize)
+      this.drawZoomStepGlyph(plusCx, trackY, false, zoomGlyphColor, iconSize)
 
       this.zoomMinusRect = { x: rect.x, y: pillY, w: stepInset, h: pillH }
       this.zoomPlusRect = {
@@ -1250,12 +1430,23 @@ export class WxHudOverlay extends Container {
   ): void {
     const h = 16
     const w = this.badgeWidth(label)
-    if (warm) {
-      drawGradientBadge(this.bgBottom, x, y, w, h, 0xffb703, 0xff8c00)
-    } else {
-      drawGradientBadge(this.bgBottom, x, y, w, h, 0x4deeea, 0x1a8cff)
-    }
+    const [c1, c2] = warm
+      ? [BADGE_WARM_START, BADGE_WARM_END]
+      : [WX_THEME.accent, WX_THEME.accent2]
+    // 角标底画在 bgBottom；路径风图标改 Canvas2D 烘焙，避免 poly fill 破坏同批 fill
+    drawGradientBadge(
+      this.bgBottom,
+      x,
+      y,
+      w,
+      h,
+      c1,
+      c2,
+      WX_THEME.surfaceStrong,
+      WX_THEME.surfaceStrongAlpha,
+    )
     textNode.text = label
+    textNode.setFill(WX_THEME.btnTextDark)
     textNode.anchor.set(0.5)
     textNode.x = x + w / 2
     textNode.y = y + h / 2 + 0.5
@@ -1315,11 +1506,27 @@ export class WxHudOverlay extends Container {
     this.shareToastText.visible = true
   }
 
+  /**
+   * 顶栏 pause/settings 图标色 — 对齐 Web GameView `.game--l1-chrome`：
+   * 蓝图（浅 chrome 字）：pause/settings 均 accent；
+   * 信纸/原木（深 chrome 字）：pause/settings 均用 frameText，避免白字贴在 #e8e2d8/#dbc9b0 外框上。
+   */
+  private hudTopBarIconColor(
+    theme: BoardTheme,
+    chromeSplit: boolean,
+    _icon: 'pause' | 'settings',
+  ): number {
+    if (!chromeSplit) return theme.wx.accent
+    if (isLightChromeFrameText(theme)) return theme.wx.accent
+    return boardThemeFrameText(theme)
+  }
+
   private drawHudCircleButton(
     rect: Rect,
     pathStyle: boolean,
     btnSize = GAME_HUD.pauseSize,
     embedded = false,
+    theme: BoardTheme = getBoardTheme(DEFAULT_BOARD_THEME_INDEX),
     chromeSplit = false,
     icon: 'pause' | 'settings' = 'pause',
   ): void {
@@ -1357,18 +1564,15 @@ export class WxHudOverlay extends Container {
     if (embedded && !chromeSplit) {
       this.bgTop.circle(cx, cy, r - 1).fill({ color: 0xffffff, alpha: pathStyle ? 0.04 : 0.06 })
     }
-    const iconColor = chromeSplit ? 0xffffff : pathStyle ? 0xbcc6d8 : WX_THEME.accent
+    const iconColor = this.hudTopBarIconColor(theme, chromeSplit, icon)
     const iconSize =
-      icon === 'settings'
-        ? hudSettingsIconSize(pathStyle)
-        : pathStyle
-          ? 14
-          : 16
-    if (icon === 'pause') {
-      this.drawMiniIcon(cx, cy, 'pause')
-    } else {
-      drawWxGameIcon(this.bgTop, 'settings', cx, cy, iconSize, iconColor)
-    }
+      icon === 'settings' ? hudSettingsIconSize(pathStyle) : hudPauseIconSize(pathStyle)
+    const iconAlpha = chromeSplit ? 0.95 : 0.9
+    const iconSprite = icon === 'settings' ? this.settingsIconSprite : this.pauseIconSprite
+    iconSprite.configure(iconSize, iconColor, iconAlpha)
+    iconSprite.x = cx
+    iconSprite.y = cy
+    iconSprite.visible = true
   }
 
   private drawClassicZoom(s: WxHudState): void {
@@ -1428,13 +1632,6 @@ export class WxHudOverlay extends Container {
     t.y = rect.y + rect.h / 2
   }
 
-  private drawMiniIcon(cx: number, cy: number, kind: 'pause'): void {
-    if (kind === 'pause') {
-      this.bgTop.rect(cx - 5, cy - 6, 3, 12).fill({ color: 0xffffff, alpha: 0.9 })
-      this.bgTop.rect(cx + 2, cy - 6, 3, 12).fill({ color: 0xffffff, alpha: 0.9 })
-    }
-  }
-
   override destroy(options?: Parameters<Container['destroy']>[0]): void {
     this.clearTransientTexts()
     if (isWxMiniGame()) {
@@ -1442,6 +1639,11 @@ export class WxHudOverlay extends Container {
     }
     this.pauseCanvasLayer.destroy(options)
     this.gameModalCanvasLayer.destroy(options)
+    this.pauseIconSprite.destroy(options)
+    this.settingsIconSprite.destroy(options)
+    this.heartsSprite.destroy(options)
+    this.hintIconSprite.destroy(options)
+    this.assistIconSprite.destroy(options)
     super.destroy(options)
   }
 }

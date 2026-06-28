@@ -2,9 +2,9 @@ import { Application, Container, Graphics, Rectangle } from 'pixi.js'
 import {
   drawDiagGradientRect,
   drawGlassPanel,
-  drawGlassPanelAccent,
   drawGlow,
   drawHGradientRect,
+  drawSurfacePanel,
   drawStripes,
 } from '@/wx/wx-draw'
 import { WX_THEME } from '@/wx/wx-theme'
@@ -71,9 +71,8 @@ export function bakeHomePreviewFrame(app: Application) {
   return bake(
     app,
     (g) => {
-      drawDiagGradientRect(g, 0, 0, 300, 300, 0xffffff, 0xffffff, 22)
-      g.roundRect(0, 0, 300, 300, 22).stroke({ width: 1, color: WX_THEME.border, alpha: 0.45 })
-      g.rect(22, 22, 256, 256).fill({ color: 0x0e1219 })
+      drawDiagGradientRect(g, 0, 0, 300, 300, WX_THEME.board, WX_THEME.board, 22)
+      g.roundRect(0, 0, 300, 300, 22).stroke({ width: 1, color: WX_THEME.border, alpha: WX_THEME.borderAlpha * 0.8 })
     },
     300,
     300,
@@ -110,7 +109,7 @@ export function bakeHomeCardBg(app: Application) {
   return bake(
     app,
     (g) => {
-      drawGlassPanelAccent(g, 0, 0, 340, 96, 16)
+      drawSurfacePanel(g, 0, 0, 340, 96, 16)
       g.circle(170, 22, 14).fill({ color: WX_THEME.accent, alpha: 0.15 })
     },
     340,

@@ -31,9 +31,13 @@ export interface UiThemeColors {
 export interface WxThemeColors {
   bg: number
   bgSoft: number
+  board: number
   surface: number
+  surfaceAlpha: number
   surfaceStrong: number
+  surfaceStrongAlpha: number
   border: number
+  borderAlpha: number
   text: number
   textMuted: number
   textDim: number
@@ -42,7 +46,9 @@ export interface WxThemeColors {
   warn: number
   danger: number
   glass: number
+  glassAlpha: number
   glassBorder: number
+  glassBorderAlpha: number
   snakeFrom: number
   snakeTo: number
   snakeHead: number
@@ -52,6 +58,9 @@ export interface WxThemeColors {
   gradientBlueEnd: number
   btnTextDark: number
   hudBg: number
+  iconHint: number
+  iconAssist: number
+  hintRing: number
   font: string
 }
 
@@ -75,26 +84,52 @@ export interface BoardTheme {
   wx: WxThemeColors
 }
 
+export const BOARD_THEME_PACK_VERSION = 3
+
+/** 新用户默认主题：蓝图（index 0） */
+export const DEFAULT_BOARD_THEME_INDEX = 0
+
 function hex(value: string): number {
+  return parseUiColor(value).rgb
+}
+
+export function parseUiColor(value: string): { rgb: number; alpha: number } {
   const v = value.trim()
   if (v.startsWith('#')) {
     const parsed = Number.parseInt(v.slice(1), 16)
-    return Number.isFinite(parsed) ? parsed : 0
+    return { rgb: Number.isFinite(parsed) ? parsed : 0, alpha: 1 }
   }
-  const rgb = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(v)
-  if (rgb) {
-    return (Number(rgb[1]) << 16) | (Number(rgb[2]) << 8) | Number(rgb[3])
+  const rgba = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/i.exec(v)
+  if (rgba) {
+    const r = Number(rgba[1])
+    const g = Number(rgba[2])
+    const b = Number(rgba[3])
+    const alpha = rgba[4] !== undefined ? Number(rgba[4]) : 1
+    return {
+      rgb: (r << 16) | (g << 8) | b,
+      alpha: Number.isFinite(alpha) ? alpha : 1,
+    }
   }
-  return 0
+  return { rgb: 0, alpha: 1 }
 }
 
 function wxFromUi(ui: UiThemeColors, accentAlt: string): WxThemeColors {
+  const surface = parseUiColor(ui.surface)
+  const surfaceStrong = parseUiColor(ui.surfaceStrong)
+  const border = parseUiColor(ui.border)
+  const glass = parseUiColor(ui.glass)
+  const glassBorder = parseUiColor(ui.glassBorder)
+
   return {
     bg: hex(ui.bg),
     bgSoft: hex(ui.bgSoft),
-    surface: 0xffffff,
-    surfaceStrong: hex(ui.surfaceStrong),
-    border: hex(ui.accent),
+    board: hex(ui.board),
+    surface: surface.rgb,
+    surfaceAlpha: surface.alpha,
+    surfaceStrong: surfaceStrong.rgb,
+    surfaceStrongAlpha: surfaceStrong.alpha,
+    border: border.rgb,
+    borderAlpha: border.alpha,
     text: hex(ui.text),
     textMuted: hex(ui.textMuted),
     textDim: hex(ui.textDim),
@@ -102,8 +137,10 @@ function wxFromUi(ui: UiThemeColors, accentAlt: string): WxThemeColors {
     accent2: hex(ui.accent2),
     warn: hex(ui.warn),
     danger: hex(ui.danger),
-    glass: 0xffffff,
-    glassBorder: 0xffffff,
+    glass: glass.rgb,
+    glassAlpha: glass.alpha,
+    glassBorder: glassBorder.rgb,
+    glassBorderAlpha: glassBorder.alpha,
     snakeFrom: hex(ui.snakeFrom),
     snakeTo: hex(ui.snakeTo),
     snakeHead: hex(ui.snakeHead),
@@ -111,423 +148,220 @@ function wxFromUi(ui: UiThemeColors, accentAlt: string): WxThemeColors {
     gradientWarmEnd: hex('#ff8c42'),
     gradientBlueStart: hex(accentAlt),
     gradientBlueEnd: hex(ui.accent),
-    btnTextDark: hex(ui.bg),
+    btnTextDark: 0xffffff,
     hudBg: hex(ui.bgSoft),
+    iconHint: hex(ui.iconHint),
+    iconAssist: hex(ui.iconAssist),
+    hintRing: hex(ui.hintRing),
     font: 'PingFang SC',
   }
 }
 
+const PAPER_UI: UiThemeColors = {
+  bg: '#f6f3ee',
+  bgSoft: '#ede8e0',
+  board: '#faf8f5',
+  surface: 'rgba(255, 255, 255, 0.78)',
+  surfaceStrong: '#ffffff',
+  border: 'rgba(90, 104, 120, 0.14)',
+  borderStrong: 'rgba(90, 104, 120, 0.24)',
+  text: '#2c3340',
+  textMuted: '#6a7888',
+  textDim: '#98a4b4',
+  accent: '#5a6878',
+  accent2: '#788498',
+  warn: '#d4a030',
+  danger: '#e63950',
+  glass: 'rgba(255, 255, 255, 0.72)',
+  glassBorder: 'rgba(90, 104, 120, 0.1)',
+  gradient: 'linear-gradient(90deg, #5a6878, #788498)',
+  glow: '0 4px 20px rgba(90, 104, 120, 0.1)',
+  iconHint: '#5a6878',
+  iconAssist: '#d4a030',
+  snakeFrom: '#3a4454',
+  snakeTo: '#5a6878',
+  snakeHead: '#2c3340',
+  assistGrid: '#98a4b4',
+  hintRing: '#ffd866',
+}
+
+const BLUEPRINT_UI: UiThemeColors = {
+  bg: '#e8f0fa',
+  bgSoft: '#dce8f8',
+  board: '#dce8f8',
+  surface: 'rgba(255, 255, 255, 0.82)',
+  surfaceStrong: '#ffffff',
+  border: 'rgba(42, 104, 168, 0.16)',
+  borderStrong: 'rgba(42, 104, 168, 0.28)',
+  text: '#1a3868',
+  textMuted: '#587898',
+  textDim: '#7a98b8',
+  accent: '#2a68a8',
+  accent2: '#4a88c8',
+  warn: '#d4a030',
+  danger: '#e63950',
+  glass: 'rgba(255, 255, 255, 0.75)',
+  glassBorder: 'rgba(42, 104, 168, 0.1)',
+  gradient: 'linear-gradient(90deg, #2a68a8, #4a88c8)',
+  glow: '0 4px 20px rgba(42, 104, 168, 0.12)',
+  iconHint: '#2a68a8',
+  iconAssist: '#d4a030',
+  snakeFrom: '#1a4888',
+  snakeTo: '#2a68a8',
+  snakeHead: '#143870',
+  assistGrid: '#6890c0',
+  hintRing: '#ffe08a',
+}
+
+const WOOD_UI: UiThemeColors = {
+  bg: '#f6efe6',
+  bgSoft: '#ede4d8',
+  board: '#f5ebe0',
+  surface: 'rgba(255, 255, 255, 0.78)',
+  surfaceStrong: '#ffffff',
+  border: 'rgba(160, 120, 72, 0.16)',
+  borderStrong: 'rgba(160, 120, 72, 0.28)',
+  text: '#4a3828',
+  textMuted: '#8a7868',
+  textDim: '#a89888',
+  accent: '#a07848',
+  accent2: '#c89858',
+  warn: '#d4a030',
+  danger: '#d84848',
+  glass: 'rgba(255, 255, 255, 0.72)',
+  glassBorder: 'rgba(160, 120, 72, 0.1)',
+  gradient: 'linear-gradient(90deg, #a07848, #c89858)',
+  glow: '0 4px 20px rgba(160, 120, 72, 0.1)',
+  iconHint: '#a07848',
+  iconAssist: '#d4a030',
+  snakeFrom: '#6a5038',
+  snakeTo: '#8a6848',
+  snakeHead: '#4a3828',
+  assistGrid: '#b8a088',
+  hintRing: '#ffe08a',
+}
+
+const NEON_UI: UiThemeColors = {
+  bg: '#060810',
+  bgSoft: '#0a0c12',
+  board: '#0a0c12',
+  surface: 'rgba(255, 255, 255, 0.04)',
+  surfaceStrong: 'rgba(6, 8, 16, 0.94)',
+  border: 'rgba(0, 229, 255, 0.22)',
+  borderStrong: 'rgba(0, 229, 255, 0.44)',
+  text: '#e8f8fc',
+  textMuted: '#6898a8',
+  textDim: '#486878',
+  accent: '#00e5ff',
+  accent2: '#40f0ff',
+  warn: '#f0c060',
+  danger: '#ff4080',
+  glass: 'rgba(255, 255, 255, 0.05)',
+  glassBorder: 'rgba(255, 255, 255, 0.1)',
+  gradient: 'linear-gradient(90deg, #00c8e0, #40f0ff)',
+  glow: '0 0 24px rgba(0, 229, 255, 0.2)',
+  iconHint: '#00e5ff',
+  iconAssist: '#f0c060',
+  snakeFrom: '#00c8e0',
+  snakeTo: '#40f0ff',
+  snakeHead: '#00a8c0',
+  assistGrid: '#283848',
+  hintRing: '#ffe08a',
+}
+
 export const BOARD_THEMES: readonly BoardTheme[] = [
   {
-    id: 'paper',
-    label: '经典',
-    bg: hex('#f7f8fa'),
-    cssBg: '#f7f8fa',
-    frameBg: hex('#6a96c8'),
-    cssFrameBg: '#6a96c8',
+    id: 'blueprint',
+    label: '蓝图',
+    bg: hex('#dce8f8'),
+    cssBg: '#dce8f8',
+    frameBg: hex('#b0c8e8'),
+    cssFrameBg: '#b0c8e8',
     frameText: hex('#ffffff'),
     cssFrameText: '#ffffff',
-    path: hex('#2a3140'),
+    path: hex('#1a4888'),
     pathBlocked: hex('#e63950'),
-    pathHint: hex('#e3e9f2'),
-    gridDot: hex('#97a5b8'),
-    ui: {
-      bg: '#0d1219',
-      bgSoft: '#121a24',
-      board: '#f7f8fa',
-      surface: 'rgba(255, 255, 255, 0.05)',
-      surfaceStrong: 'rgba(14, 22, 34, 0.94)',
-      border: 'rgba(106, 150, 200, 0.28)',
-      borderStrong: 'rgba(106, 150, 200, 0.52)',
-      text: '#eef2f7',
-      textMuted: '#8fa0b4',
-      textDim: '#667688',
-      accent: '#6a96c8',
-      accent2: '#98b8dc',
-      warn: '#e8b44a',
-      danger: '#e63950',
-      glass: 'rgba(255, 255, 255, 0.06)',
-      glassBorder: 'rgba(255, 255, 255, 0.12)',
-      gradient: 'linear-gradient(90deg, #6a96c8, #98b8dc)',
-      glow: '0 0 24px rgba(106, 150, 200, 0.22)',
-      iconHint: '#6a96c8',
-      iconAssist: '#e8b44a',
-      snakeFrom: '#5a88bc',
-      snakeTo: '#7aa8d4',
-      snakeHead: '#4a78ac',
-      assistGrid: '#97a5b8',
-      hintRing: '#ffd866',
-    },
-    wx: wxFromUi(
-      {
-        bg: '#0d1219',
-        bgSoft: '#121a24',
-        board: '#f7f8fa',
-        surface: 'rgba(255, 255, 255, 0.05)',
-        surfaceStrong: 'rgba(14, 22, 34, 0.94)',
-        border: 'rgba(106, 150, 200, 0.28)',
-        borderStrong: 'rgba(106, 150, 200, 0.52)',
-        text: '#eef2f7',
-        textMuted: '#8fa0b4',
-        textDim: '#667688',
-        accent: '#6a96c8',
-        accent2: '#98b8dc',
-        warn: '#e8b44a',
-        danger: '#e63950',
-        glass: 'rgba(255, 255, 255, 0.06)',
-        glassBorder: 'rgba(255, 255, 255, 0.12)',
-        gradient: 'linear-gradient(90deg, #6a96c8, #98b8dc)',
-        glow: '0 0 24px rgba(106, 150, 200, 0.22)',
-        iconHint: '#6a96c8',
-        iconAssist: '#e8b44a',
-        snakeFrom: '#5a88bc',
-        snakeTo: '#7aa8d4',
-        snakeHead: '#4a78ac',
-        assistGrid: '#97a5b8',
-        hintRing: '#ffd866',
-      },
-      '#4a78ac',
-    ),
+    pathHint: hex('#b8cce8'),
+    gridDot: hex('#6890c0'),
+    ui: BLUEPRINT_UI,
+    wx: wxFromUi(BLUEPRINT_UI, '#2a68a8'),
   },
   {
-    id: 'slate',
-    label: '石墨',
-    bg: hex('#131820'),
-    cssBg: '#131820',
-    path: hex('#b8c5d6'),
-    pathBlocked: hex('#ff8090'),
-    pathHint: hex('#2a3344'),
-    gridDot: hex('#465064'),
-    ui: {
-      bg: '#0a0e14',
-      bgSoft: '#101620',
-      board: '#131820',
-      surface: 'rgba(255, 255, 255, 0.04)',
-      surfaceStrong: 'rgba(10, 14, 22, 0.94)',
-      border: 'rgba(184, 197, 214, 0.18)',
-      borderStrong: 'rgba(184, 197, 214, 0.36)',
-      text: '#e8edf4',
-      textMuted: '#8b98aa',
-      textDim: '#667588',
-      accent: '#9cb0c8',
-      accent2: '#b8c5d6',
-      warn: '#e8c468',
-      danger: '#ff8090',
-      glass: 'rgba(255, 255, 255, 0.05)',
-      glassBorder: 'rgba(255, 255, 255, 0.1)',
-      gradient: 'linear-gradient(90deg, #8ca0b8, #b8c5d6)',
-      glow: '0 0 22px rgba(156, 176, 200, 0.16)',
-      iconHint: '#9cb0c8',
-      iconAssist: '#e8c468',
-      snakeFrom: '#8ca0b8',
-      snakeTo: '#b0c0d4',
-      snakeHead: '#7a90a8',
-      assistGrid: '#667588',
-      hintRing: '#ffe08a',
-    },
-    wx: wxFromUi(
-      {
-        bg: '#0a0e14',
-        bgSoft: '#101620',
-        board: '#131820',
-        surface: 'rgba(255, 255, 255, 0.04)',
-        surfaceStrong: 'rgba(10, 14, 22, 0.94)',
-        border: 'rgba(184, 197, 214, 0.18)',
-        borderStrong: 'rgba(184, 197, 214, 0.36)',
-        text: '#e8edf4',
-        textMuted: '#8b98aa',
-        textDim: '#667588',
-        accent: '#9cb0c8',
-        accent2: '#b8c5d6',
-        warn: '#e8c468',
-        danger: '#ff8090',
-        glass: 'rgba(255, 255, 255, 0.05)',
-        glassBorder: 'rgba(255, 255, 255, 0.1)',
-        gradient: 'linear-gradient(90deg, #8ca0b8, #b8c5d6)',
-        glow: '0 0 22px rgba(156, 176, 200, 0.16)',
-        iconHint: '#9cb0c8',
-        iconAssist: '#e8c468',
-        snakeFrom: '#8ca0b8',
-        snakeTo: '#b0c0d4',
-        snakeHead: '#7a90a8',
-        assistGrid: '#667588',
-        hintRing: '#ffe08a',
-      },
-      '#7a90a8',
-    ),
+    id: 'paper',
+    label: '信纸',
+    bg: hex('#faf8f5'),
+    cssBg: '#faf8f5',
+    frameBg: hex('#e8e2d8'),
+    cssFrameBg: '#e8e2d8',
+    frameText: hex('#5a6878'),
+    cssFrameText: '#5a6878',
+    path: hex('#2c3340'),
+    pathBlocked: hex('#e63950'),
+    pathHint: hex('#d4dbe8'),
+    gridDot: hex('#98a4b4'),
+    ui: PAPER_UI,
+    wx: wxFromUi(PAPER_UI, '#5a6878'),
   },
   {
-    id: 'violet',
-    label: '暮紫',
-    bg: hex('#181024'),
-    cssBg: '#181024',
-    path: hex('#cbb8ea'),
-    pathBlocked: hex('#ff9ec8'),
-    pathHint: hex('#2e2540'),
-    gridDot: hex('#5c4a78'),
-    ui: {
-      bg: '#100a18',
-      bgSoft: '#160e22',
-      board: '#181024',
-      surface: 'rgba(255, 255, 255, 0.05)',
-      surfaceStrong: 'rgba(14, 8, 22, 0.94)',
-      border: 'rgba(203, 184, 234, 0.2)',
-      borderStrong: 'rgba(203, 184, 234, 0.4)',
-      text: '#f0e8fa',
-      textMuted: '#a898c0',
-      textDim: '#786890',
-      accent: '#b89ae8',
-      accent2: '#d4c4f0',
-      warn: '#f0c878',
-      danger: '#ff9ec8',
-      glass: 'rgba(255, 255, 255, 0.06)',
-      glassBorder: 'rgba(255, 255, 255, 0.11)',
-      gradient: 'linear-gradient(90deg, #a888dc, #d4c4f0)',
-      glow: '0 0 24px rgba(184, 154, 232, 0.2)',
-      iconHint: '#b89ae8',
-      iconAssist: '#f0c878',
-      snakeFrom: '#a888dc',
-      snakeTo: '#cbb8ea',
-      snakeHead: '#9878cc',
-      assistGrid: '#786890',
-      hintRing: '#ffe08a',
-    },
-    wx: wxFromUi(
-      {
-        bg: '#100a18',
-        bgSoft: '#160e22',
-        board: '#181024',
-        surface: 'rgba(255, 255, 255, 0.05)',
-        surfaceStrong: 'rgba(14, 8, 22, 0.94)',
-        border: 'rgba(203, 184, 234, 0.2)',
-        borderStrong: 'rgba(203, 184, 234, 0.4)',
-        text: '#f0e8fa',
-        textMuted: '#a898c0',
-        textDim: '#786890',
-        accent: '#b89ae8',
-        accent2: '#d4c4f0',
-        warn: '#f0c878',
-        danger: '#ff9ec8',
-        glass: 'rgba(255, 255, 255, 0.06)',
-        glassBorder: 'rgba(255, 255, 255, 0.11)',
-        gradient: 'linear-gradient(90deg, #a888dc, #d4c4f0)',
-        glow: '0 0 24px rgba(184, 154, 232, 0.2)',
-        iconHint: '#b89ae8',
-        iconAssist: '#f0c878',
-        snakeFrom: '#a888dc',
-        snakeTo: '#cbb8ea',
-        snakeHead: '#9878cc',
-        assistGrid: '#786890',
-        hintRing: '#ffe08a',
-      },
-      '#9878cc',
-    ),
+    id: 'wood',
+    label: '原木',
+    bg: hex('#f5ebe0'),
+    cssBg: '#f5ebe0',
+    frameBg: hex('#dbc9b0'),
+    cssFrameBg: '#dbc9b0',
+    frameText: hex('#6a5038'),
+    cssFrameText: '#6a5038',
+    path: hex('#4a3828'),
+    pathBlocked: hex('#d84848'),
+    pathHint: hex('#e8dcc8'),
+    gridDot: hex('#b8a088'),
+    ui: WOOD_UI,
+    wx: wxFromUi(WOOD_UI, '#8a6848'),
   },
   {
-    id: 'ocean',
-    label: '深海',
-    bg: hex('#081422'),
-    cssBg: '#081422',
-    path: hex('#72c4e8'),
-    pathBlocked: hex('#ff7898'),
-    pathHint: hex('#142838'),
-    gridDot: hex('#2a5070'),
-    ui: {
-      bg: '#060e18',
-      bgSoft: '#0a1420',
-      board: '#081422',
-      surface: 'rgba(255, 255, 255, 0.04)',
-      surfaceStrong: 'rgba(6, 12, 22, 0.94)',
-      border: 'rgba(114, 196, 232, 0.2)',
-      borderStrong: 'rgba(114, 196, 232, 0.42)',
-      text: '#e4f4fc',
-      textMuted: '#7aa0b8',
-      textDim: '#587890',
-      accent: '#4eb8e8',
-      accent2: '#7ec8e8',
-      warn: '#f0c060',
-      danger: '#ff7898',
-      glass: 'rgba(255, 255, 255, 0.05)',
-      glassBorder: 'rgba(255, 255, 255, 0.1)',
-      gradient: 'linear-gradient(90deg, #3aa8dc, #7ec8e8)',
-      glow: '0 0 24px rgba(78, 184, 232, 0.18)',
-      iconHint: '#4eb8e8',
-      iconAssist: '#f0c060',
-      snakeFrom: '#3aa8dc',
-      snakeTo: '#72c4e8',
-      snakeHead: '#2a98cc',
-      assistGrid: '#587890',
-      hintRing: '#ffe08a',
-    },
-    wx: wxFromUi(
-      {
-        bg: '#060e18',
-        bgSoft: '#0a1420',
-        board: '#081422',
-        surface: 'rgba(255, 255, 255, 0.04)',
-        surfaceStrong: 'rgba(6, 12, 22, 0.94)',
-        border: 'rgba(114, 196, 232, 0.2)',
-        borderStrong: 'rgba(114, 196, 232, 0.42)',
-        text: '#e4f4fc',
-        textMuted: '#7aa0b8',
-        textDim: '#587890',
-        accent: '#4eb8e8',
-        accent2: '#7ec8e8',
-        warn: '#f0c060',
-        danger: '#ff7898',
-        glass: 'rgba(255, 255, 255, 0.05)',
-        glassBorder: 'rgba(255, 255, 255, 0.1)',
-        gradient: 'linear-gradient(90deg, #3aa8dc, #7ec8e8)',
-        glow: '0 0 24px rgba(78, 184, 232, 0.18)',
-        iconHint: '#4eb8e8',
-        iconAssist: '#f0c060',
-        snakeFrom: '#3aa8dc',
-        snakeTo: '#72c4e8',
-        snakeHead: '#2a98cc',
-        assistGrid: '#587890',
-        hintRing: '#ffe08a',
-      },
-      '#2a98cc',
-    ),
-  },
-  {
-    id: 'warm',
-    label: '暖沙',
-    bg: hex('#1a1610'),
-    cssBg: '#1a1610',
-    path: hex('#e0ccaa'),
-    pathBlocked: hex('#ff9870'),
-    pathHint: hex('#2e2820'),
-    gridDot: hex('#5c5040'),
-    ui: {
-      bg: '#12100c',
-      bgSoft: '#181410',
-      board: '#1a1610',
-      surface: 'rgba(255, 255, 255, 0.04)',
-      surfaceStrong: 'rgba(16, 14, 10, 0.94)',
-      border: 'rgba(224, 204, 170, 0.18)',
-      borderStrong: 'rgba(224, 204, 170, 0.36)',
-      text: '#f4ece0',
-      textMuted: '#a89880',
-      textDim: '#807060',
-      accent: '#d4a858',
-      accent2: '#e8cc98',
-      warn: '#f0b848',
-      danger: '#ff9870',
-      glass: 'rgba(255, 255, 255, 0.05)',
-      glassBorder: 'rgba(255, 255, 255, 0.1)',
-      gradient: 'linear-gradient(90deg, #c89848, #e8cc98)',
-      glow: '0 0 22px rgba(212, 168, 88, 0.16)',
-      iconHint: '#d4a858',
-      iconAssist: '#f0b848',
-      snakeFrom: '#c89848',
-      snakeTo: '#e0ccaa',
-      snakeHead: '#b88838',
-      assistGrid: '#807060',
-      hintRing: '#ffe08a',
-    },
-    wx: wxFromUi(
-      {
-        bg: '#12100c',
-        bgSoft: '#181410',
-        board: '#1a1610',
-        surface: 'rgba(255, 255, 255, 0.04)',
-        surfaceStrong: 'rgba(16, 14, 10, 0.94)',
-        border: 'rgba(224, 204, 170, 0.18)',
-        borderStrong: 'rgba(224, 204, 170, 0.36)',
-        text: '#f4ece0',
-        textMuted: '#a89880',
-        textDim: '#807060',
-        accent: '#d4a858',
-        accent2: '#e8cc98',
-        warn: '#f0b848',
-        danger: '#ff9870',
-        glass: 'rgba(255, 255, 255, 0.05)',
-        glassBorder: 'rgba(255, 255, 255, 0.1)',
-        gradient: 'linear-gradient(90deg, #c89848, #e8cc98)',
-        glow: '0 0 22px rgba(212, 168, 88, 0.16)',
-        iconHint: '#d4a858',
-        iconAssist: '#f0b848',
-        snakeFrom: '#c89848',
-        snakeTo: '#e0ccaa',
-        snakeHead: '#b88838',
-        assistGrid: '#807060',
-        hintRing: '#ffe08a',
-      },
-      '#b88838',
-    ),
-  },
-  {
-    id: 'forest',
-    label: '森雾',
-    bg: hex('#0e1612'),
-    cssBg: '#0e1612',
-    path: hex('#98d4b4'),
-    pathBlocked: hex('#ff8878'),
-    pathHint: hex('#1e2e24'),
-    gridDot: hex('#3a5244'),
-    ui: {
-      bg: '#0a100e',
-      bgSoft: '#0e1612',
-      board: '#0e1612',
-      surface: 'rgba(255, 255, 255, 0.04)',
-      surfaceStrong: 'rgba(8, 14, 10, 0.94)',
-      border: 'rgba(152, 212, 180, 0.18)',
-      borderStrong: 'rgba(152, 212, 180, 0.36)',
-      text: '#e8f4ec',
-      textMuted: '#7a9888',
-      textDim: '#587868',
-      accent: '#68c894',
-      accent2: '#98d4b4',
-      warn: '#e8c060',
-      danger: '#ff8878',
-      glass: 'rgba(255, 255, 255, 0.05)',
-      glassBorder: 'rgba(255, 255, 255, 0.1)',
-      gradient: 'linear-gradient(90deg, #58b884, #98d4b4)',
-      glow: '0 0 22px rgba(104, 200, 148, 0.16)',
-      iconHint: '#68c894',
-      iconAssist: '#e8c060',
-      snakeFrom: '#58b884',
-      snakeTo: '#98d4b4',
-      snakeHead: '#48a874',
-      assistGrid: '#587868',
-      hintRing: '#ffe08a',
-    },
-    wx: wxFromUi(
-      {
-        bg: '#0a100e',
-        bgSoft: '#0e1612',
-        board: '#0e1612',
-        surface: 'rgba(255, 255, 255, 0.04)',
-        surfaceStrong: 'rgba(8, 14, 10, 0.94)',
-        border: 'rgba(152, 212, 180, 0.18)',
-        borderStrong: 'rgba(152, 212, 180, 0.36)',
-        text: '#e8f4ec',
-        textMuted: '#7a9888',
-        textDim: '#587868',
-        accent: '#68c894',
-        accent2: '#98d4b4',
-        warn: '#e8c060',
-        danger: '#ff8878',
-        glass: 'rgba(255, 255, 255, 0.05)',
-        glassBorder: 'rgba(255, 255, 255, 0.1)',
-        gradient: 'linear-gradient(90deg, #58b884, #98d4b4)',
-        glow: '0 0 22px rgba(104, 200, 148, 0.16)',
-        iconHint: '#68c894',
-        iconAssist: '#e8c060',
-        snakeFrom: '#58b884',
-        snakeTo: '#98d4b4',
-        snakeHead: '#48a874',
-        assistGrid: '#587868',
-        hintRing: '#ffe08a',
-      },
-      '#48a874',
-    ),
+    id: 'neon',
+    label: '霓虹',
+    bg: hex('#080a0e'),
+    cssBg: '#080a0e',
+    path: hex('#00e5ff'),
+    pathBlocked: hex('#ff4080'),
+    pathHint: hex('#141820'),
+    gridDot: hex('#283848'),
+    ui: NEON_UI,
+    wx: wxFromUi(NEON_UI, '#00a8c0'),
   },
 ] as const
 
+/** v1（6 套）索引 → v3（4 套材质，蓝图 index 0） */
+export function migrateBoardThemeIndexFromV1(index: number): number {
+  const map: Record<number, number> = {
+    0: 1,
+    1: 3,
+    2: 3,
+    3: 0,
+    4: 2,
+    5: 2,
+  }
+  const n = Math.floor(index)
+  if (n in map) return map[n]!
+  return normalizeBoardThemeIndex(n)
+}
+
+/** v2 索引 → v3：蓝图与信纸换位（0↔1，2/3 不变） */
+export function migrateBoardThemeIndexFromV2(index: number): number {
+  const map: Record<number, number> = {
+    0: 1,
+    1: 0,
+    2: 2,
+    3: 3,
+  }
+  const n = Math.floor(index)
+  if (n in map) return map[n]!
+  return normalizeBoardThemeIndex(n)
+}
+
 export function normalizeBoardThemeIndex(index: number): number {
-  if (!Number.isFinite(index)) return 0
+  if (!Number.isFinite(index)) return DEFAULT_BOARD_THEME_INDEX
   const n = Math.floor(index)
   return ((n % BOARD_THEMES.length) + BOARD_THEMES.length) % BOARD_THEMES.length
 }

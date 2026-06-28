@@ -5,13 +5,16 @@ import {
   type SettingsModalVisualState,
 } from '@/canvas-home/settings-visual-draw'
 import { getPlatform } from '@/platform'
+import { normalizeBoardThemeIndex } from '@/game/board-theme'
 import {
   bakeCanvasToImageSprite,
   destroyWxCanvasBakeState,
   invalidateWxCanvasBake,
+  withWxCanvasBakeLock,
   type WxCanvasBakeState,
 } from '@/wx/wx-canvas-bake'
 import { getWxSharedOffscreenCanvas, getWxCanvas2dContext } from '@/wx/canvas'
+import { WX_THEME_INDEX } from '@/wx/wx-theme'
 
 /** 微信设置弹窗 — Canvas 绘制 + Image 烘焙 */
 export class WxSettingsCanvasLayer extends Sprite {
@@ -40,10 +43,12 @@ export class WxSettingsCanvasLayer extends Sprite {
     this.width = screenW
     this.height = screenH
 
-    const key = `${screenW}|${screenH}|${state.soundEnabled}|${state.boardThemeIndex}`
+    const boardThemeIndex = normalizeBoardThemeIndex(state.boardThemeIndex)
+    const normalizedState: SettingsModalVisualState = { ...state, boardThemeIndex }
+    const key = `${screenW}|${screenH}|${normalizedState.soundEnabled}|${boardThemeIndex}|t${WX_THEME_INDEX}`
     if (key !== this.cacheKey) {
       this.cacheKey = key
-      this.pending = { screenW, screenH, state }
+      this.pending = { screenW, screenH, state: normalizedState }
       void this.ensureBaked()
     }
     return this.lastHits
@@ -58,10 +63,15 @@ export class WxSettingsCanvasLayer extends Sprite {
     invalidateWxCanvasBake(this, this.bakeState)
   }
 
+  requestTextureRefresh(): void {
+    this.cacheKey = ''
+  }
+
   private ensureBaked(): Promise<void> {
     if (this.baking) return this.baking
     this.baking = this.doBake().finally(() => {
       this.baking = null
+      if (this.pending) void this.ensureBaked()
     })
     return this.baking
   }
@@ -69,29 +79,32 @@ export class WxSettingsCanvasLayer extends Sprite {
   private async doBake(): Promise<void> {
     const p = this.pending
     if (!p) return
+    this.pending = null
 
-    const dpr = Math.min(getPlatform().getDevicePixelRatio(), 2)
-    const pixelW = Math.max(1, Math.ceil(p.screenW * dpr))
-    const pixelH = Math.max(1, Math.ceil(p.screenH * dpr))
-    const canvas = getWxSharedOffscreenCanvas()
-    if (canvas.width !== pixelW || canvas.height !== pixelH) {
-      canvas.width = pixelW
-      canvas.height = pixelH
-    }
+    await withWxCanvasBakeLock(async () => {
+      const dpr = Math.min(getPlatform().getDevicePixelRatio(), 2)
+      const pixelW = Math.max(1, Math.ceil(p.screenW * dpr))
+      const pixelH = Math.max(1, Math.ceil(p.screenH * dpr))
+      const canvas = getWxSharedOffscreenCanvas()
+      if (canvas.width !== pixelW || canvas.height !== pixelH) {
+        canvas.width = pixelW
+        canvas.height = pixelH
+      }
 
-    const ctx = getWxCanvas2dContext(canvas)
-    if (!ctx) return
+      const ctx = getWxCanvas2dContext(canvas)
+      if (!ctx) return
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, p.screenW, p.screenH)
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, p.screenW, p.screenH)
 
-    const { hits } = drawSettingsModalVisual(ctx, p.screenW, p.screenH, p.state)
-    this.lastHits = hits
+      const { hits } = drawSettingsModalVisual(ctx, p.screenW, p.screenH, p.state)
+      this.lastHits = hits
 
-    await bakeCanvasToImageSprite(this, this.bakeState, canvas, dpr, p.screenW, p.screenH)
-    this.width = p.screenW
-    this.height = p.screenH
-    this.onTextureReady?.()
+      await bakeCanvasToImageSprite(this, this.bakeState, canvas, dpr, p.screenW, p.screenH)
+      this.width = p.screenW
+      this.height = p.screenH
+      this.onTextureReady?.()
+    })
   }
 
   override destroy(options?: Parameters<Sprite['destroy']>[0]): void {

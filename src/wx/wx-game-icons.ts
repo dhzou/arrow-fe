@@ -4,8 +4,6 @@ import {
   ASSIST_ICON_OUTER,
   mapRoutePoint,
   ROUTE_ICON_POLYGONS,
-  SETTINGS_ICON_GEAR,
-  SETTINGS_ICON_HOLE_R,
   SPARKLE_ICON_POLYGONS,
 } from '@/canvas-home/game-icon-paths'
 
@@ -48,6 +46,32 @@ function fillIconPolygon(
   g.closePath().fill({ color, alpha })
 }
 
+function drawSettingsIconStroked(
+  g: Graphics,
+  cx: number,
+  cy: number,
+  size: number,
+  color: number,
+  alpha: number,
+): void {
+  const s = size / 24
+  const sw = 1.75 * s
+  const outerR = 8.5 * s
+  const holeR = 3.2 * s
+  g.circle(cx, cy, outerR).stroke({ width: sw, color, alpha })
+  for (let i = 0; i < 8; i++) {
+    const ang = (i / 8) * Math.PI * 2 - Math.PI / 2
+    const x1 = cx + Math.cos(ang) * (outerR - 0.4 * s)
+    const y1 = cy + Math.sin(ang) * (outerR - 0.4 * s)
+    const x2 = cx + Math.cos(ang) * (outerR + 2.6 * s)
+    const y2 = cy + Math.sin(ang) * (outerR + 2.6 * s)
+    g.moveTo(x1, y1)
+      .lineTo(x2, y2)
+      .stroke({ width: sw, color, alpha, cap: 'round' })
+  }
+  g.circle(cx, cy, holeR).stroke({ width: sw, color, alpha })
+}
+
 function fillSettingsIcon(
   g: Graphics,
   cx: number,
@@ -56,16 +80,8 @@ function fillSettingsIcon(
   color: number,
   alpha: number,
 ): void {
-  const flat: number[] = []
-  for (const [x, y] of SETTINGS_ICON_GEAR) {
-    const [px, py] = mapRoutePoint(x, y, cx, cy, size)
-    flat.push(px, py)
-  }
-  g.poly(flat, true).fill({ color, alpha })
-  const holeR = (SETTINGS_ICON_HOLE_R / 1024) * size
-  if (holeR > 0.5) {
-    g.circle(cx, cy, holeR).cut()
-  }
+  // 微信 Canvas 渲染器上 poly fill / .cut() 会破坏同 Graphics 批次内其它 fill
+  drawSettingsIconStroked(g, cx, cy, size, color, alpha)
 }
 
 /** 对齐 Web GameIcon.vue 的简化几何绘制 */
@@ -149,8 +165,11 @@ export function drawWxGameIcon(
       break
     }
     case 'pause': {
-      g.rect(cx - 9, cy - 16, 4, 32).fill({ color, alpha })
-      g.rect(cx + 5, cy - 16, 4, 32).fill({ color, alpha })
+      const barW = size / 8
+      const barH = size / 2
+      const gap = size / 8
+      g.rect(cx - barW - gap / 2, cy - barH / 2, barW, barH).fill({ color, alpha })
+      g.rect(cx + gap / 2, cy - barH / 2, barW, barH).fill({ color, alpha })
       break
     }
     case 'palette': {

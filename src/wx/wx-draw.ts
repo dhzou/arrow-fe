@@ -55,7 +55,12 @@ export function drawVerticalGradientRect(
   }
 }
 
-/** 简化心形（对齐 Web GameIcon heart） */
+/** 与 Web GameView.vue `.hearts` 一致 */
+export const HUD_HEART_ALIVE = 0xff4d6d
+export const HUD_HEART_DEAD = 0x4a5568
+export const HUD_HEART_DEAD_ALPHA = 0.45
+
+/** 简化心形（对齐 Web GameIcon heart；微信端统一 fill，描边-only 在真机常不显示） */
 export function drawHeart(
   g: Graphics,
   cx: number,
@@ -66,22 +71,14 @@ export function drawHeart(
   filled = true,
 ): void {
   const s = size / 20
-  if (filled) {
-    g.circle(cx - 4.5 * s, cy - 1.5 * s, 5.5 * s).fill({ color, alpha })
-    g.circle(cx + 4.5 * s, cy - 1.5 * s, 5.5 * s).fill({ color, alpha })
-    g.moveTo(cx - 9 * s, cy + 1 * s)
-      .lineTo(cx, cy + 9 * s)
-      .lineTo(cx + 9 * s, cy + 1 * s)
-      .closePath()
-      .fill({ color, alpha })
-  } else {
-    g.circle(cx - 4.5 * s, cy - 1.5 * s, 5.5 * s).stroke({ width: 1.4 * s, color, alpha })
-    g.circle(cx + 4.5 * s, cy - 1.5 * s, 5.5 * s).stroke({ width: 1.4 * s, color, alpha })
-    g.moveTo(cx - 9 * s, cy + 1 * s)
-      .lineTo(cx, cy + 9 * s)
-      .lineTo(cx + 9 * s, cy + 1 * s)
-      .stroke({ width: 1.4 * s, color, alpha })
-  }
+  const a = filled ? alpha : alpha * HUD_HEART_DEAD_ALPHA
+  g.circle(cx - 4.5 * s, cy - 1.5 * s, 5.5 * s).fill({ color, alpha: a })
+  g.circle(cx + 4.5 * s, cy - 1.5 * s, 5.5 * s).fill({ color, alpha: a })
+  g.moveTo(cx - 9 * s, cy + 1 * s)
+    .lineTo(cx, cy + 9 * s)
+    .lineTo(cx + 9 * s, cy + 1 * s)
+    .closePath()
+    .fill({ color, alpha: a })
 }
 
 /** 水平渐变矩形（无圆角，配合 mask 使用） */
@@ -159,7 +156,11 @@ export function drawDiagGradientRect(
   }
 }
 
-/** 数字角标胶囊（对齐 Web .tool .badge） */
+/** 分享可得时的暖色角标 — 对齐 Web `.tool .badge.warm` */
+export const BADGE_WARM_START = 0xffb703
+export const BADGE_WARM_END = 0xff8c00
+
+/** 数字角标胶囊（对齐 Web .tool .badge — 90deg 渐变 + surfaceStrong 描边） */
 export function drawGradientBadge(
   g: Graphics,
   x: number,
@@ -168,28 +169,25 @@ export function drawGradientBadge(
   h: number,
   c1: number,
   c2: number,
+  borderColor: number = WX_THEME.surfaceStrong,
+  borderAlpha: number = WX_THEME.surfaceStrongAlpha,
 ): void {
   const r = h / 2
-  const cx = x + w / 2
   const cy = y + h / 2
-  const isCircle = w <= h + 1
 
-  if (isCircle) {
-    const steps = 10
-    for (let i = steps - 1; i >= 0; i--) {
-      const t = i / (steps - 1)
-      const color = lerpColor(c1, c2, 0.12 + t * 0.88)
-      g.circle(cx, cy, r * ((i + 1) / steps)).fill({ color, alpha: 1 })
+  // 小圆角胶囊不能用「按列 roundRect(r=全高)」— 16px 宽时 slice 比 r 窄，fill 在真机常丢失
+  if (w <= h + 0.5) {
+    drawHGradientRectFlat(g, x, y, w, h, c1, c2)
+  } else {
+    g.circle(x + r, cy, r).fill({ color: c1 })
+    g.circle(x + w - r, cy, r).fill({ color: c2 })
+    const midW = w - 2 * r
+    if (midW > 0) {
+      drawHGradientRectFlat(g, x + r, y, midW, h, c1, c2)
     }
-    g.ellipse(cx - r * 0.22, cy - r * 0.28, r * 0.48, r * 0.32).fill({ color: c1, alpha: 0.28 })
-    g.circle(cx, cy, r).stroke({ width: 1.5, color: 0x080e18, alpha: 0.9 })
-    return
   }
 
-  g.roundRect(x, y, w, h, r).fill({ color: c2, alpha: 1 })
-  g.roundRect(x, y, w * 0.72, h, r).fill({ color: c1, alpha: 0.62 })
-  g.ellipse(x + w * 0.28, y + h * 0.36, w * 0.22, h * 0.28).fill({ color: c1, alpha: 0.22 })
-  g.roundRect(x, y, w, h, r).stroke({ width: 1.5, color: 0x080e18, alpha: 0.9 })
+  g.roundRect(x, y, w, h, r).stroke({ width: 1.5, color: borderColor, alpha: borderAlpha })
 }
 
 /** 圆形斜向渐变（对齐 Web .hint-icon / .assist-icon 的 border-radius: 50%） */
@@ -213,8 +211,14 @@ export function drawDiagGradientCircle(
 }
 
 export function drawGlassPanel(g: Graphics, x: number, y: number, w: number, h: number, r: number): void {
-  g.roundRect(x, y, w, h, r).fill({ color: WX_THEME.glass, alpha: 0.06 })
-  g.roundRect(x, y, w, h, r).stroke({ width: 1, color: WX_THEME.glassBorder, alpha: 0.12 })
+  g.roundRect(x, y, w, h, r).fill({ color: WX_THEME.glass, alpha: WX_THEME.glassAlpha })
+  g.roundRect(x, y, w, h, r).stroke({ width: 1, color: WX_THEME.glassBorder, alpha: WX_THEME.glassBorderAlpha })
+}
+
+/** 进度卡片等 — 对齐 Web `--game-surface` */
+export function drawSurfacePanel(g: Graphics, x: number, y: number, w: number, h: number, r: number): void {
+  g.roundRect(x, y, w, h, r).fill({ color: WX_THEME.surface, alpha: WX_THEME.surfaceAlpha })
+  g.roundRect(x, y, w, h, r).stroke({ width: 1, color: WX_THEME.border, alpha: WX_THEME.borderAlpha * 0.7 })
 }
 
 /** 顶栏圆形导航按钮（返回 / 关闭），对齐 GAME_HUD.pauseSize */
@@ -227,8 +231,8 @@ export function drawNavCircleButton(g: Graphics, rect: Rect): void {
 }
 
 export function drawGlassPanelAccent(g: Graphics, x: number, y: number, w: number, h: number, r: number): void {
-  g.roundRect(x, y, w, h, r).fill({ color: WX_THEME.surfaceStrong, alpha: 0.92 })
-  g.roundRect(x, y, w, h, r).stroke({ width: 1, color: WX_THEME.border, alpha: 0.22 })
+  g.roundRect(x, y, w, h, r).fill({ color: WX_THEME.surfaceStrong, alpha: WX_THEME.surfaceStrongAlpha })
+  g.roundRect(x, y, w, h, r).stroke({ width: 1, color: WX_THEME.border, alpha: WX_THEME.borderAlpha * 0.75 })
 }
 
 /** 游戏顶栏玻璃胶囊（微信 HUD） */

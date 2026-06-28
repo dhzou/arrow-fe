@@ -49,9 +49,9 @@ export class WxHomeOverlay extends Container {
     '连胜 0 · 从当前关卡继续',
     wxTextStyle(WX_THEME.textDim, 12),
   )
-  private readonly chip0 = new WxCanvasText('每日签到', wxTextStyle(WX_THEME.text, 12))
-  private readonly chip1 = new WxCanvasText('全服排行', wxTextStyle(WX_THEME.text, 12))
-  private readonly chip2 = new WxCanvasText('设置', wxTextStyle(WX_THEME.text, 12))
+  private readonly chip0 = new WxCanvasText('每日签到', wxTextStyle(WX_THEME.textMuted, 12))
+  private readonly chip1 = new WxCanvasText('全服排行', wxTextStyle(WX_THEME.textMuted, 12))
+  private readonly chip2 = new WxCanvasText('设置', wxTextStyle(WX_THEME.textMuted, 12))
   private readonly startLabel = new WxCanvasText('开始游戏', wxTextStyle(WX_THEME.btnTextDark, 18, '800'))
 
   private screenW = 375
@@ -113,6 +113,16 @@ export class WxHomeOverlay extends Container {
     void this.bakeRemainingTexts(critical)
   }
 
+  /** 冷启动 — 等待首页 Canvas 视觉层首帧烘焙 */
+  ensureVisualReady(): Promise<void> {
+    return this.canvasLayer.ensureReady()
+  }
+
+  /** 装饰循环起始时刻（秒），与静态首帧 preview 对齐 */
+  setAnimTime(tSec: number): void {
+    this.animTick = tSec * 1000
+  }
+
   private async bakeRemainingTexts(skip: WxCanvasText[]): Promise<void> {
     const skipSet = new Set(skip)
     for (const node of this.textNodes) {
@@ -125,12 +135,22 @@ export class WxHomeOverlay extends Container {
     await this.bakeAllTexts()
   }
 
-  /** 从后台恢复 — 重烘焙 Canvas/Image 纹理，避免黑屏 */
+  /** 从后台恢复 — 保留纹理先上屏，再异步重烘焙 */
   recoverAfterBackground(): void {
-    this.canvasLayer.invalidateBakedTexture()
-    this.previewLayer.invalidateBakedTexture()
-    void this.rebakeAllTexts()
-    this.redraw()
+    void this.softRecoverAfterBackground()
+  }
+
+  async softRecoverAfterBackground(): Promise<void> {
+    this.canvasLayer.requestTextureRefresh()
+    this.previewLayer.requestTextureRefresh()
+    if (this.layoutCache) {
+      this.refreshVisual()
+      const { preview } = this.layoutCache
+      this.previewLayer.refresh(0, preview.x, preview.y, preview.w, preview.h)
+    } else {
+      this.redraw()
+    }
+    await this.rebakeAllTexts()
   }
 
   /** 切换棋盘主题后刷新首页文字色与 Canvas 视觉层 */
@@ -141,9 +161,9 @@ export class WxHomeOverlay extends Container {
     this.cardTitle.setFill(WX_THEME.textMuted)
     this.levelNumText.setGradient(WX_THEME.accent, WX_THEME.accent2)
     this.levelSubText.setFill(WX_THEME.textDim)
-    this.chip0.setFill(WX_THEME.text)
-    this.chip1.setFill(WX_THEME.text)
-    this.chip2.setFill(WX_THEME.text)
+    this.chip0.setFill(WX_THEME.textMuted)
+    this.chip1.setFill(WX_THEME.textMuted)
+    this.chip2.setFill(WX_THEME.textMuted)
     this.startLabel.setFill(WX_THEME.btnTextDark)
     void this.rebakeAllTexts()
     this.redraw()
@@ -262,7 +282,7 @@ export class WxHomeOverlay extends Container {
     if (!this.pressedAction) return
     const rect = this.rectForAction(this.pressedAction)
     if (!rect) return
-    const shape = this.pressedAction === 'start' ? 'pill' : 'round'
+    const shape = this.pressedAction === 'start' ? 'primary' : 'ghost'
     drawWxButtonPressHighlight(this.pressGfx, rect, shape)
   }
 

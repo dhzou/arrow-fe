@@ -1,5 +1,6 @@
 import { Container, Graphics } from 'pixi.js'
 import { inRect, type Rect } from '@/canvas-home/home-layout'
+import { MODAL_OVERLAY_ALPHA, MODAL_OVERLAY_RGB } from '@/canvas-home/canvas2d-draw'
 import { drawGlassPanelAccent, drawHGradientRect } from '@/wx/wx-draw'
 import { drawWxButtonPressHighlight } from '@/wx/wx-button-press'
 import { WxCanvasText, wxTextStyle } from '@/wx/wx-canvas-text'
@@ -21,7 +22,7 @@ export class WxSignInOverlay extends Container {
   private readonly textLayer = new Container()
   private readonly titleText = new WxCanvasText(DAILY_SIGN_IN.title, wxTextStyle(WX_THEME.accent, 13, '700'))
   private readonly subText = new WxCanvasText(DAILY_SIGN_IN.subtitle, wxTextStyle(WX_THEME.textMuted, 11))
-  private readonly warnText = new WxCanvasText(DAILY_SIGN_IN.streakBroken, wxTextStyle(0xffb703, 11))
+  private readonly warnText = new WxCanvasText(DAILY_SIGN_IN.streakBroken, wxTextStyle(WX_THEME.warn, 11))
   private readonly todayText = new WxCanvasText('', wxTextStyle(WX_THEME.textMuted, 12))
   private readonly toastText = new WxCanvasText('', wxTextStyle(WX_THEME.accent, 12, '600'))
   private readonly claimText = new WxCanvasText(DAILY_SIGN_IN.claim, wxTextStyle(WX_THEME.btnTextDark, 15, '700'))
@@ -29,15 +30,15 @@ export class WxSignInOverlay extends Container {
     `${DAILY_SIGN_IN.claimed} · ${DAILY_SIGN_IN.tomorrow}`,
     wxTextStyle(WX_THEME.textMuted, 12),
   )
-  private readonly closeText = new WxCanvasText('×', wxTextStyle(0x8aa0b8, 22))
+  private readonly closeText = new WxCanvasText('×', wxTextStyle(WX_THEME.textMuted, 22))
 
   private panelRect: Rect = { x: 0, y: 0, w: 0, h: 0 }
   private closeRect: Rect = { x: 0, y: 0, w: 0, h: 0 }
   private claimRect: Rect = { x: 0, y: 0, w: 0, h: 0 }
   private view: WxSignInViewState = {
     status: {
-      canClaim: true,
-      alreadyClaimedToday: false,
+      canClaim: false,
+      alreadyClaimedToday: true,
       currentDay: 1,
       streakBroken: false,
       todayReward: SIGN_IN_REWARDS[0]!,
@@ -53,6 +54,7 @@ export class WxSignInOverlay extends Container {
 
   constructor() {
     super()
+    this.visible = false
     this.addChild(this.bg)
     this.addChild(this.textLayer)
     this.addChild(this.pressGfx)
@@ -66,7 +68,7 @@ export class WxSignInOverlay extends Container {
     this.textLayer.addChild(this.closeText)
     for (let i = 0; i < 7; i++) {
       const label = new WxCanvasText(DAILY_SIGN_IN.dayLabel(i + 1), wxTextStyle(WX_THEME.textMuted, 9))
-      const reward = new WxCanvasText('', wxTextStyle(0xdce4f0, 9))
+      const reward = new WxCanvasText('', wxTextStyle(WX_THEME.text, 9))
       this.dayLabels.push(label)
       this.dayRewards.push(reward)
       this.textLayer.addChild(label)
@@ -78,11 +80,26 @@ export class WxSignInOverlay extends Container {
   layout(width: number, height: number, _safeTop: number): void {
     this.screenW = width
     this.screenH = height
-    this.redraw()
+    if (this.visible) this.redraw()
   }
 
   setView(view: WxSignInViewState): void {
     this.view = view
+    this.redraw()
+  }
+
+  /** 切换棋盘主题 — 刷新文字色与面板绘制 */
+  syncTheme(): void {
+    this.titleText.setFill(WX_THEME.accent)
+    this.subText.setFill(WX_THEME.textMuted)
+    this.warnText.setFill(WX_THEME.warn)
+    this.todayText.setFill(WX_THEME.textMuted)
+    this.toastText.setFill(WX_THEME.accent)
+    this.claimText.setFill(WX_THEME.btnTextDark)
+    this.claimedText.setFill(WX_THEME.textMuted)
+    this.closeText.setFill(WX_THEME.textMuted)
+    for (const label of this.dayLabels) label.setFill(WX_THEME.textMuted)
+    for (const reward of this.dayRewards) reward.setFill(WX_THEME.text)
     this.redraw()
   }
 
@@ -123,7 +140,10 @@ export class WxSignInOverlay extends Container {
     this.closeRect = { x: 0, y: 0, w: 0, h: 0 }
     this.claimRect = { x: 0, y: 0, w: 0, h: 0 }
 
-    this.bg.rect(0, 0, this.screenW, this.screenH).fill({ color: 0x000000, alpha: 0.65 })
+    this.bg.rect(0, 0, this.screenW, this.screenH).fill({
+      color: MODAL_OVERLAY_RGB,
+      alpha: MODAL_OVERLAY_ALPHA,
+    })
 
     const modalW = Math.min(360, this.screenW - 40)
     const pad = 18
@@ -177,17 +197,17 @@ export class WxSignInOverlay extends Container {
       const reward = SIGN_IN_REWARDS[i]!
 
       this.bg.roundRect(x, y, cellW, cellH, 10).fill({
-        color: done ? 0x7ef29a : 0xffffff,
+        color: done ? WX_THEME.accent2 : WX_THEME.glass,
         alpha: done ? 0.1 : 0.05,
       })
       this.bg.roundRect(x, y, cellW, cellH, 10).stroke({
         width: today ? 1.5 : 1,
-        color: today ? WX_THEME.accent : 0xffffff,
+        color: today ? WX_THEME.accent : WX_THEME.glassBorder,
         alpha: today ? 0.55 : 0.1,
       })
 
       if (done) {
-        this.bg.circle(x + cellW - 8, y + 8, 4).fill({ color: 0x7ef29a, alpha: 0.95 })
+        this.bg.circle(x + cellW - 8, y + 8, 4).fill({ color: WX_THEME.accent2, alpha: 0.95 })
       }
 
       const label = this.dayLabels[i]!

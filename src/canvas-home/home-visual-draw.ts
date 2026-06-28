@@ -1,6 +1,4 @@
 import { drawPreviewPaths2d } from '@/canvas-home/preview-path-draw'
-import { startButtonShineX } from '@/canvas-home/preview-path-animation'
-import { drawCardBorderLight } from '@/canvas-home/card-border-light'
 import type { HomeLayout, Rect } from '@/canvas-home/home-layout'
 import {
   drawGameIcon2d,
@@ -8,11 +6,12 @@ import {
   drawHomeAmbient,
   drawStripes,
   fillGlassPanel,
-  fillHGradient,
+  fillSurfacePanel,
   hexCss,
   homeGlowCenters,
   roundRectPath,
 } from '@/canvas-home/canvas2d-draw'
+import { drawUiGhostBg, drawUiPrimaryBg, UI_BTN } from '@/canvas-home/ui-button-system'
 import { WX_THEME } from '@/wx/wx-theme'
 import { HOME_CSS } from '@/canvas-home/home-css'
 
@@ -28,13 +27,13 @@ export function drawHomeBackground(ctx: CanvasRenderingContext2D, w: number, h: 
   ctx.fillRect(0, 0, w, h)
 
   const lift = ctx.createRadialGradient(w * 0.5, h * 0.38, 0, w * 0.5, h * 0.52, Math.max(w, h) * 0.75)
-  lift.addColorStop(0, hexCss(WX_THEME.bgSoft, 0.22))
-  lift.addColorStop(0.55, hexCss(WX_THEME.bgSoft, 0.05))
+  lift.addColorStop(0, hexCss(WX_THEME.bgSoft, 0.35))
+  lift.addColorStop(0.55, hexCss(WX_THEME.bgSoft, 0.08))
   lift.addColorStop(1, hexCss(WX_THEME.bgSoft, 0))
   ctx.fillStyle = lift
   ctx.fillRect(0, 0, w, h)
 
-  drawStripes(ctx, w, h)
+  drawStripes(ctx, w, h, WX_THEME.accent)
 }
 
 export function drawHomeDecor(
@@ -46,8 +45,8 @@ export function drawHomeDecor(
 ): void {
   const glow = homeGlowCenters(w, h, safeTop, t)
   drawHomeAmbient(ctx, w, h, glow.a, glow.b, WX_THEME.accent, WX_THEME.accent2)
-  drawGlow(ctx, glow.a.x, glow.a.y, 110, WX_THEME.accent, 0.24)
-  drawGlow(ctx, glow.b.x, glow.b.y, 110, WX_THEME.accent2, 0.24)
+  drawGlow(ctx, glow.a.x, glow.a.y, 80, WX_THEME.accent, 0.08)
+  drawGlow(ctx, glow.b.x, glow.b.y, 80, WX_THEME.accent2, 0.06)
 }
 
 export interface HomeVisualOptions {
@@ -65,70 +64,35 @@ export function drawHomeUi(
 
   const badgeR = badge.h / 2
   fillGlassPanel(ctx, badge.x, badge.y, badge.w, badge.h, badgeR)
-  ctx.strokeStyle = hexCss(WX_THEME.border, 0.22)
+  ctx.strokeStyle = hexCss(WX_THEME.border, 0.18)
   ctx.lineWidth = 1
   roundRectPath(ctx, badge.x, badge.y, badge.w, badge.h, badgeR)
   ctx.stroke()
   drawGameIcon2d(ctx, 'sparkle', L.badgeIconX, badge.y + badge.h / 2, HOME_CSS.badgeIcon * s, WX_THEME.accent)
 
-  ctx.fillStyle = 'rgba(0,0,0,0.32)'
-  roundRectPath(ctx, preview.x, preview.y + 4 * s, preview.w, preview.h, 22)
+  const previewR = 20 * s
+  ctx.fillStyle = hexCss(WX_THEME.board)
+  roundRectPath(ctx, preview.x, preview.y, preview.w, preview.h, previewR)
   ctx.fill()
-  ctx.fillStyle = hexCss(WX_THEME.bgSoft)
-  roundRectPath(ctx, preview.x, preview.y, preview.w, preview.h, 22)
-  ctx.fill()
-  ctx.strokeStyle = hexCss(WX_THEME.border, 0.14)
+  ctx.strokeStyle = hexCss(WX_THEME.border, WX_THEME.borderAlpha * 0.8)
   ctx.lineWidth = 1
-  roundRectPath(ctx, preview.x, preview.y, preview.w, preview.h, 22)
+  roundRectPath(ctx, preview.x, preview.y, preview.w, preview.h, previewR)
   ctx.stroke()
 
-  fillGlassPanel(ctx, card.x, card.y, card.w, card.h, 16)
-  ctx.strokeStyle = hexCss(WX_THEME.border, 0.22)
-  ctx.lineWidth = 1
-  roundRectPath(ctx, card.x, card.y, card.w, card.h, 16)
-  ctx.stroke()
-  const cardGlow = ctx.createRadialGradient(
-    card.x + card.w / 2,
-    card.y,
-    0,
-    card.x + card.w / 2,
-    card.y,
-    card.w * 0.35,
-  )
-  cardGlow.addColorStop(0, hexCss(WX_THEME.accent, 0.12))
-  cardGlow.addColorStop(1, hexCss(WX_THEME.accent, 0))
-  ctx.fillStyle = cardGlow
-  ctx.beginPath()
-  ctx.arc(card.x + card.w / 2, card.y, card.w * 0.35, 0, Math.PI * 2)
-  ctx.fill()
-  drawGameIcon2d(ctx, 'route', L.cardIconX, L.cardIconY, 28 * s, WX_THEME.accent, 0.95)
-  drawCardBorderLight(ctx, card.x, card.y, card.w, card.h, 16, t, WX_THEME.accent)
+  fillSurfacePanel(ctx, card.x, card.y, card.w, card.h, 16)
+  drawGameIcon2d(ctx, 'route', L.cardIconX, L.cardIconY, 28 * s, WX_THEME.accent, 0.9)
 
-  const chipMeta: Array<{ name: 'calendar' | 'crown' | 'settings'; color: number; border: number }> =
-    [
-      { name: 'calendar', color: WX_THEME.accent2, border: WX_THEME.accent2 },
-      { name: 'crown', color: WX_THEME.accent, border: WX_THEME.accent },
-      { name: 'settings', color: WX_THEME.accent, border: WX_THEME.accent2 },
-    ]
-
+  const chipIcons: Array<'calendar' | 'crown' | 'settings'> = ['calendar', 'crown', 'settings']
   chips.forEach((chip, i) => {
-    fillGlassPanel(ctx, chip.x, chip.y, chip.w, chip.h, 17)
-    if (i === 2) {
-      ctx.fillStyle = hexCss(WX_THEME.accent, 0.12)
-      roundRectPath(ctx, chip.x, chip.y, chip.w, chip.h, 17)
-      ctx.fill()
-    }
-    ctx.strokeStyle = hexCss(chipMeta[i].border, 0.4)
-    ctx.lineWidth = 1
-    roundRectPath(ctx, chip.x, chip.y, chip.w, chip.h, 17)
-    ctx.stroke()
+    drawUiGhostBg(ctx, chip, UI_BTN.ghostRadius)
     drawGameIcon2d(
       ctx,
-      chipMeta[i].name,
+      chipIcons[i],
       L.chipIconX[i],
       chip.y + chip.h / 2,
-      16 * s,
-      chipMeta[i].color,
+      HOME_CSS.chipIcon * s,
+      WX_THEME.textMuted,
+      0.85,
     )
   })
 
@@ -136,28 +100,7 @@ export function drawHomeUi(
     drawPreviewPaths2d(ctx, preview.x, preview.y, preview.w, preview.h, t)
   }
 
-  fillHGradient(ctx, start.x, start.y, start.w, start.h, WX_THEME.accent, WX_THEME.accent2, start.h / 2)
-
-  const shineLeft = startButtonShineX(start.x, start.w, t)
-  const shine = ctx.createLinearGradient(shineLeft, start.y, shineLeft + start.w * 0.35, start.y)
-  shine.addColorStop(0, 'rgba(255,255,255,0)')
-  shine.addColorStop(0.5, 'rgba(255,255,255,0.35)')
-  shine.addColorStop(1, 'rgba(255,255,255,0)')
-  ctx.save()
-  roundRectPath(ctx, start.x, start.y, start.w, start.h, start.h / 2)
-  ctx.clip()
-  ctx.fillStyle = shine
-  ctx.fillRect(start.x, start.y, start.w, start.h)
-  ctx.restore()
-
-  drawGameIcon2d(
-    ctx,
-    'play',
-    L.startIconX,
-    start.y + start.h / 2,
-    22 * s,
-    WX_THEME.btnTextDark,
-  )
+  drawUiPrimaryBg(ctx, start, UI_BTN.primaryRadius)
 
   return { start: { ...start }, signIn: { ...chips[0]! }, settings: { ...chips[2]! }, leaderboard: { ...chips[1]! } }
 }

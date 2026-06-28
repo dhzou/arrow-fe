@@ -1,4 +1,5 @@
 import type { GameController } from '@/game/GameController'
+import { syncThemePack } from '@/game/apply-ui-theme'
 import { ProgressBridge } from '@/game/ProgressBridge'
 import {
   BOARD_ZOOM_DEFAULT,
@@ -14,6 +15,7 @@ import type { ShareMenuContent } from '@/platform/types'
 import { SnakeRenderer } from '@/renderer/SnakeRenderer'
 import { playSound, resumeAudio } from '@/utils/sound'
 import { MINIGAME_STORE } from '@/game/game-ui-content'
+import { PATH_MAIN_ANIM_SEC } from '@/canvas-home/preview-path-animation'
 import { WX_HOME_ANIM_MS, WX_HOME_ANIM_SPEED, wxHomeAnimFrame, wxHomePreviewFrame } from '@/wx/wx-home-anim'
 import { WxHomeOverlay, type WxHomeAction } from './WxHomeOverlay'
 import type { WxHudAction, WxHudState, WxHudOverlay } from './WxHudOverlay'
@@ -28,6 +30,7 @@ import {
   isWxRankingAvailable,
   submitRanking,
 } from './wx-ranking'
+import { WX_THEME_INDEX } from './wx-theme'
 
 type WxScreen = 'home' | 'game' | 'leaderboard'
 
@@ -99,6 +102,7 @@ export class WxGameApp {
     this.renderer.addOverlayLayer(this.settings)
     this.renderer.addOverlayLayer(this.leaderboard)
     this.renderer.addOverlayLayer(this.signIn)
+    this.syncModalOverlayVisibility()
 
     this.layoutOverlays(metrics)
 
@@ -117,11 +121,12 @@ export class WxGameApp {
     this.leaderboard.onPressVisualChange = onPressVisualChange
     this.leaderboard.onContentReady = onPressVisualChange
 
-    this.applyScreen()
+    await this.finishHomeBoot()
+
+    this.applyScreen({ coldStart: true })
     this.renderer.forceRender()
     hideWxLoadingCover()
 
-    void this.finishHomeBoot()
     void this.preloadGameCore()
     void ensureSnakeLevelsLoaded()
 
@@ -143,9 +148,9 @@ export class WxGameApp {
     if (pixiApp) {
       await this.home.loadAssets(pixiApp)
     }
+    await this.home.ensureVisualReady()
     this.homeTextsReady = true
     this.syncHome()
-    this.applyScreen()
   }
 
   private preloadGameCore(): Promise<void> {
@@ -230,7 +235,14 @@ export class WxGameApp {
     await this.home.rebakeAllTexts()
   }
 
-  private applyScreen(opts?: { preserveHomeVisual?: boolean }): void {
+  /** 弹窗层默认隐藏，避免冷启动 layout/redraw 在 applyScreen 前上屏 */
+  private syncModalOverlayVisibility(): void {
+    this.settings.visible = this.settingsOpen && (this.screen === 'home' || this.screen === 'game')
+    this.leaderboard.visible = this.screen === 'leaderboard'
+    this.signIn.visible = this.signInOpen && this.screen === 'home'
+  }
+
+  private applyScreen(opts?: { preserveHomeVisual?: boolean; coldStart?: boolean }): void {
     if (this.screen !== 'home') {
       this.signInOpen = false
     }
@@ -238,15 +250,16 @@ export class WxGameApp {
       this.settingsOpen = false
     }
     this.home.visible = this.screen === 'home'
-    this.settings.visible = this.settingsOpen && (this.screen === 'home' || this.screen === 'game')
-    this.leaderboard.visible = this.screen === 'leaderboard'
-    this.signIn.visible = this.signInOpen && this.screen === 'home'
+    this.syncModalOverlayVisibility()
     if (this.hud) this.hud.visible = this.screen === 'game'
     this.renderer.setGameplayVisible(this.screen === 'game')
     this.clearAllButtonPress()
     if (this.screen === 'home' && this.homeTextsReady) {
       if (opts?.preserveHomeVisual) {
         this.startHomeDecorLoop(false, true)
+      } else if (opts?.coldStart) {
+        this.startHomeDecorLoop(this.homeDecorDelayOnShow, false)
+        this.homeDecorDelayOnShow = false
       } else {
         this.home.prepareForDisplay()
         this.startHomeDecorLoop(this.homeDecorDelayOnShow)
@@ -263,6 +276,9 @@ export class WxGameApp {
       this.homeDecorFrame = -1
       this.homePreviewFrame = -1
       this.homeAnimKey = ''
+      if (delayDecor) {
+        this.home.setAnimTime(PATH_MAIN_ANIM_SEC * 0.5)
+      }
     }
     this.homeDecorStartMs = delayDecor ? performance.now() + 120 : performance.now()
     this.homeAnimLastTs = 0
@@ -320,11 +336,8 @@ export class WxGameApp {
     this.renderer.resize(metrics.width, metrics.height)
     this.layoutOverlays(metrics)
 
-    this.home.recoverAfterBackground()
-    this.settings.recoverAfterBackground()
-    this.hud?.recoverAfterBackground()
-
     if (this.screen === 'game' && this.controller) {
+      this.hud?.recoverAfterBackground()
       const c = this.controller
       c.renderSession()
       this.syncHud()
@@ -335,11 +348,18 @@ export class WxGameApp {
         this.startCompleteDecorLoop()
       }
     } else if (this.screen === 'home') {
-      this.home.prepareForDisplay()
-      this.startHomeDecorLoop(false)
-      await this.relayoutHomeTexts(metrics)
+      this.startHomeDecorLoop(false, true)
       this.syncHome()
-      if (this.settingsOpen) this.syncSettings()
+      if (this.settingsOpen) {
+        this.settings.recoverAfterBackground()
+        this.syncSettings()
+      }
+      this.renderer.resumeAfterBackground()
+      void this.finishHomeReshow(metrics)
+      if (this.signInOpen) {
+        this.syncSignIn()
+      }
+      return
     } else if (this.screen === 'leaderboard') {
       this.renderer.forceRender()
     }
@@ -349,6 +369,16 @@ export class WxGameApp {
     }
 
     this.renderer.resumeAfterBackground()
+  }
+
+  /** 切前台首帧上屏后再软刷新首页纹理，避免 invalidate 导致空白闪动 */
+  private async finishHomeReshow(
+    metrics: ReturnType<typeof wxPlatform.getScreenMetrics>,
+  ): Promise<void> {
+    await this.home.softRecoverAfterBackground()
+    await this.relayoutHomeTexts(metrics)
+    this.syncHome()
+    this.renderer.forceRender()
   }
 
   private resetOverlayAlphas(): void {
@@ -377,9 +407,13 @@ export class WxGameApp {
   }
 
   private syncSettings(): void {
+    const boardThemeIndex = this.progress.boardThemeIndex
+    if (boardThemeIndex !== WX_THEME_INDEX) {
+      syncThemePack(boardThemeIndex)
+    }
     this.settings.update({
       soundEnabled: this.progress.soundEnabled,
-      boardThemeIndex: this.progress.boardThemeIndex,
+      boardThemeIndex,
     })
     this.renderer.forceRender()
   }
@@ -561,20 +595,21 @@ export class WxGameApp {
   private openSettings(): void {
     playSound('tap')
     this.settingsOpen = true
+    this.settings.visible = this.screen === 'home' || this.screen === 'game'
     if (this.screen === 'game') {
       this.controller?.pauseForSettings()
     }
+    this.settings.prepareForOpen()
     this.syncSettings()
-    this.applyScreen()
     this.renderer.forceRender()
   }
 
   private closeSettings(): void {
     this.settingsOpen = false
+    this.settings.visible = false
     if (this.screen === 'game') {
       this.controller?.resumeAfterSettings()
     }
-    this.applyScreen()
     this.renderer.forceRender()
   }
 
@@ -1029,8 +1064,13 @@ export class WxGameApp {
     playSound('tap')
     this.progress.setBoardThemeIndex(index)
     this.renderer.setBoardThemeIndex(this.progress.boardThemeIndex)
-    this.home.syncTheme()
     this.syncSettings()
+    this.syncHud()
+    this.home.syncTheme()
+    this.signIn.syncTheme()
+    this.leaderboard.syncTheme()
+    this.hud?.syncTheme()
+    this.renderer.forceRender()
     if (this.screen === 'game' && this.controller?.session) {
       void this.ensureController().then((c) => c.renderSession())
     }

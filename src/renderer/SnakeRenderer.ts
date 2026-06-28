@@ -9,7 +9,7 @@ import {
   gridSlideOccupancy,
 } from '@/game-core/snake-grid'
 import { isPathStyleLevel, isCompactPathLevel } from '@/game-core/snake-difficulty'
-import { getBoardTheme, boardThemeFrameBg, boardThemeHasChromeSplit, normalizeBoardThemeIndex } from '@/game/board-theme'
+import { getBoardTheme, boardThemeFrameBg, boardThemeHasChromeSplit, DEFAULT_BOARD_THEME_INDEX, normalizeBoardThemeIndex } from '@/game/board-theme'
 import { getPlatform, isWxMiniGame } from '@/platform'
 import { resolveWxPixiInit } from '@/wx/canvas'
 import { wxCanvasCropToTempFile, wxCanvasCropToTempFileSync } from '@/wx/wx-canvas-capture'
@@ -173,7 +173,7 @@ export class SnakeRenderer {
   private pathStrokeBaselineHalfW = 0
   private pathStrokeBaselinePitch = 0
   private pathStrokeBaselineFit = 1
-  private boardThemeIndex = 0
+  private boardThemeIndex = DEFAULT_BOARD_THEME_INDEX
   /** 已完全显现的空格网格点 */
   private revealedGridCells = new Set<string>()
   /** 正在弹出动画的空格：cellKey → 开始时间戳 */

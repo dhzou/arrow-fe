@@ -29,6 +29,7 @@ export class WxSettingsOverlay extends Container {
 
   constructor() {
     super()
+    this.visible = false
     this.addChild(this.canvasLayer)
     this.addChild(this.pressGfx)
   }
@@ -52,9 +53,20 @@ export class WxSettingsOverlay extends Container {
     this.redraw()
   }
 
-  /** 从后台恢复 — 清烘焙缓存并重绘 */
+  /** 从后台恢复 — 失效纹理并异步重烘焙 */
   recoverAfterBackground(): void {
     this.canvasLayer.invalidateBakedTexture()
+    this.redraw()
+  }
+
+  /** 打开弹窗 — 强制重烘焙，避免缓存纹理与当前主题索引不一致 */
+  prepareForOpen(): void {
+    this.canvasLayer.invalidateBakedTexture()
+  }
+
+  /** 切换棋盘主题 — 保留当前纹理，异步按新 WX_THEME 重烘焙 */
+  syncTheme(): void {
+    this.canvasLayer.requestTextureRefresh()
     this.redraw()
   }
 

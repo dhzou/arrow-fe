@@ -1,4 +1,4 @@
-import { getBoardTheme, normalizeBoardThemeIndex } from '@/game/board-theme'
+import { DEFAULT_BOARD_THEME_INDEX, getBoardTheme, normalizeBoardThemeIndex } from '@/game/board-theme'
 import type { BoardTheme } from '@/game/board-theme'
 import { useProgressStore } from '@/stores/progress'
 import type { ProgressPort } from './ProgressPort'
@@ -26,7 +26,7 @@ export class PiniaProgressBridge implements ProgressPort {
   }
 
   get boardThemeIndex(): number {
-    return normalizeBoardThemeIndex(this.store.settings.boardThemeIndex ?? 0)
+    return normalizeBoardThemeIndex(this.store.settings.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX)
   }
 
   get hintsRemaining(): number {

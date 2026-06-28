@@ -85,6 +85,10 @@ export class WxCanvasPreview extends Sprite {
     invalidateWxCanvasBake(this, this.bakeState)
   }
 
+  requestTextureRefresh(): void {
+    this.lastPreviewKey = ''
+  }
+
   override destroy(options?: Parameters<Sprite['destroy']>[0]): void {
     destroyWxCanvasBakeState(this.bakeState)
     super.destroy(options)

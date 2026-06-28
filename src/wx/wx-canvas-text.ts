@@ -224,11 +224,15 @@ export function wxCanvasTextEstimateWidth(
   padX = 8,
 ): number {
   if (typeof wx !== 'undefined') {
-    const canvas = getWxSharedOffscreenCanvas()
-    const ctx = getWxCanvas2dContext(canvas)
-    if (ctx) {
-      ctx.font = `${fontWeight} ${fontSize}px ${wxCanvasFontFamily()}`
-      return Math.ceil(ctx.measureText(text).width) + padX * 2
+    try {
+      const canvas = getWxSharedOffscreenCanvas()
+      const ctx = getWxCanvas2dContext(canvas)
+      if (ctx) {
+        ctx.font = `${fontWeight} ${fontSize}px ${wxCanvasFontFamily()}`
+        return Math.ceil(ctx.measureText(text).width) + padX * 2
+      }
+    } catch {
+      /* 分包加载前或离屏配额耗尽时用启发式宽度，避免 HUD 同步崩溃 */
     }
   }
   return Math.ceil(text.length * fontSize * 0.62) + padX * 2

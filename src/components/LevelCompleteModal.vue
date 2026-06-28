@@ -26,7 +26,7 @@ const emit = defineEmits<{
       <h2>{{ levelLabel }}</h2>
 
       <div class="medal">
-        <GameIcon name="trophy" :size="40" color="#1a1a1a" />
+        <GameIcon name="trophy" :size="40" color="#ffffff" />
       </div>
       <div class="stars">
         <GameIcon v-for="i in 3" :key="i" name="star" :size="22" :color="'var(--game-hint-ring)'" />
@@ -44,14 +44,8 @@ const emit = defineEmits<{
       </div>
 
       <div class="actions">
-        <button class="btn primary ui-tap" @click="emit('next')">
-          <GameIcon name="play" :size="16" :color="'var(--game-bg)'" />
-          下一关
-        </button>
-        <button class="btn ghost ui-tap" @click="emit('home')">
-          <GameIcon name="home" :size="16" :color="'var(--game-text-muted)'" />
-          回到首页
-        </button>
+        <button class="btn primary ui-tap" @click="emit('next')">下一关</button>
+        <button class="btn ghost ui-tap" @click="emit('home')">回到首页</button>
       </div>
     </div>
   </div>
@@ -61,12 +55,13 @@ const emit = defineEmits<{
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.65);
+  background: var(--game-overlay, rgba(28, 36, 48, 0.4));
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 30;
   padding: 24px;
+  backdrop-filter: blur(4px);
 }
 
 .confetti {
@@ -105,12 +100,11 @@ const emit = defineEmits<{
   max-width: 340px;
   padding: 24px 20px;
   border-radius: 20px;
-  border: 1px solid var(--game-border-strong);
+  border: 1px solid color-mix(in srgb, var(--game-border) 80%, transparent);
   background: var(--game-surface-strong);
   color: var(--game-text);
   text-align: center;
-  box-shadow: var(--game-glow), var(--game-shadow);
-  backdrop-filter: blur(12px);
+  box-shadow: var(--game-shadow);
 }
 
 .tag {
@@ -137,7 +131,7 @@ h2 {
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--game-warn) 35%, transparent);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--game-warn) 22%, transparent);
   animation: ui-float 2.5s ease-in-out infinite;
 }
 
@@ -173,9 +167,9 @@ h2 {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 14px;
-  border-radius: 999px;
+  min-height: 44px;
+  padding: 12px 16px;
+  border-radius: 12px;
   font-size: 15px;
   cursor: pointer;
 }
@@ -183,9 +177,9 @@ h2 {
 .btn.primary {
   border: none;
   background: var(--game-gradient);
-  color: var(--game-bg);
+  color: #ffffff;
   font-weight: 700;
-  box-shadow: var(--game-glow);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--game-accent) 18%, transparent);
 }
 
 .btn.outline {
@@ -195,8 +189,8 @@ h2 {
 }
 
 .btn.ghost {
-  border: none;
-  background: var(--game-glass);
+  border: 1px solid color-mix(in srgb, var(--game-border) 55%, transparent);
+  background: color-mix(in srgb, var(--game-glass) 40%, transparent);
   color: var(--game-text-muted);
 }
 </style>

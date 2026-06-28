@@ -17,6 +17,7 @@ import {
 } from '@/wx/wx-canvas-bake'
 import { getWxSharedOffscreenCanvas, getWxCanvas2dContext } from '@/wx/canvas'
 import { wxHomeAnimFrame } from '@/wx/wx-home-anim'
+import { WX_THEME_INDEX } from '@/wx/wx-theme'
 
 export type GameModalPayload =
   | {
@@ -79,6 +80,11 @@ export class WxGameModalCanvasLayer extends Sprite {
     this.dismiss()
   }
 
+  /** 切前台软刷新 — 保留弹窗纹理，异步重烘焙 */
+  requestTextureRefresh(): void {
+    this.cacheKey = ''
+  }
+
   /** 关闭弹窗并丢弃排队/在途烘焙，防止切关后旧纹理闪现 */
   dismiss(): void {
     this.bakeGeneration++
@@ -111,10 +117,11 @@ export class WxGameModalCanvasLayer extends Sprite {
     this.width = screenW
     this.height = screenH
 
+    const themeTag = `t${WX_THEME_INDEX}`
     const base =
       payload.kind === 'complete'
-        ? `${screenW}|${screenH}|complete|${this.completeKey(payload)}`
-        : `${screenW}|${screenH}|failed|${this.failedKey(payload)}`
+        ? `${screenW}|${screenH}|complete|${this.completeKey(payload)}|${themeTag}`
+        : `${screenW}|${screenH}|failed|${this.failedKey(payload)}|${themeTag}`
     const key = animated && payload.kind === 'complete' ? `${base}|f${wxHomeAnimFrame(animT)}` : base
 
     if (key !== this.cacheKey) {

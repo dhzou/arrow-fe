@@ -21,18 +21,9 @@ const emit = defineEmits<{
       <h2>游戏暂停</h2>
       <p>{{ levelLabel }}</p>
       <div class="actions">
-        <button class="btn primary ui-tap" @click="emit('continue')">
-          <GameIcon name="play" :size="16" :color="'var(--game-bg)'" />
-          继续游戏
-        </button>
-        <button class="btn secondary ui-tap" @click="emit('restart')">
-          <GameIcon name="reset" :size="16" :color="'var(--game-text-muted)'" />
-          重玩本关
-        </button>
-        <button class="btn ghost ui-tap" @click="emit('home')">
-          <GameIcon name="home" :size="16" :color="'var(--game-text-dim)'" />
-          返回主菜单
-        </button>
+        <button class="btn primary ui-tap" @click="emit('continue')">继续游戏</button>
+        <button class="btn secondary ui-tap" @click="emit('restart')">重玩本关</button>
+        <button class="btn ghost ui-tap" @click="emit('home')">返回主菜单</button>
       </div>
     </div>
   </div>
@@ -42,12 +33,13 @@ const emit = defineEmits<{
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.65);
+  background: var(--game-overlay, rgba(28, 36, 48, 0.4));
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 30;
   padding: 24px;
+  backdrop-filter: blur(4px);
 }
 
 .modal {
@@ -55,12 +47,11 @@ const emit = defineEmits<{
   max-width: 320px;
   padding: 28px 24px;
   border-radius: 20px;
-  border: 1px solid color-mix(in srgb, var(--game-accent) 35%, transparent);
+  border: 1px solid color-mix(in srgb, var(--game-accent) 28%, transparent);
   background: var(--game-surface-strong);
   color: var(--game-text);
   text-align: center;
-  box-shadow: var(--game-glow), var(--game-shadow);
-  backdrop-filter: blur(12px);
+  box-shadow: var(--game-shadow);
 }
 
 .icon-wrap {
@@ -97,9 +88,9 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 14px;
-  border-radius: 999px;
+  min-height: 44px;
+  padding: 12px 16px;
+  border-radius: 12px;
   font-size: 16px;
   cursor: pointer;
 }
@@ -107,14 +98,14 @@ const emit = defineEmits<{
 .btn.primary {
   border: none;
   background: var(--game-gradient);
-  color: var(--game-bg);
+  color: #ffffff;
   font-weight: 600;
-  box-shadow: var(--game-glow);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--game-accent) 18%, transparent);
 }
 
 .btn.secondary {
-  border: 1px solid var(--game-glass-border);
-  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--game-border) 55%, transparent);
+  background: color-mix(in srgb, var(--game-glass) 40%, transparent);
   color: var(--game-text-muted);
 }
 
@@ -123,6 +114,6 @@ const emit = defineEmits<{
   background: transparent;
   color: var(--game-text-dim);
   font-size: 15px;
-  padding: 10px;
+  min-height: 40px;
 }
 </style>

@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { CanvasSettingsRenderer } from '@/canvas-home/CanvasSettingsRenderer'
+import { DEFAULT_BOARD_THEME_INDEX } from '@/game/board-theme'
 import { useProgressStore } from '@/stores/progress'
 import { playSound, resumeAudio } from '@/utils/sound'
 
@@ -50,7 +51,7 @@ onMounted(() => {
     soundEnabled: progress.soundEnabled,
     currentLevel: progress.currentLevel,
     winStreak: progress.winStreak,
-    boardThemeIndex: progress.settings.boardThemeIndex ?? 0,
+    boardThemeIndex: progress.settings.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX,
     showDev: import.meta.env.DEV,
   })
   renderer.start()
@@ -65,7 +66,7 @@ watch(
       progress.settings.boardThemeIndex,
     ] as const,
   ([soundEnabled, currentLevel, winStreak, boardThemeIndex]) => {
-    renderer?.setState({ soundEnabled, currentLevel, winStreak, boardThemeIndex: boardThemeIndex ?? 0 })
+    renderer?.setState({ soundEnabled, currentLevel, winStreak, boardThemeIndex: boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX })
   },
 )
 

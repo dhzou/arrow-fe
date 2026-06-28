@@ -1,4 +1,4 @@
-import { getBoardTheme, normalizeBoardThemeIndex } from './board-theme'
+import { DEFAULT_BOARD_THEME_INDEX, getBoardTheme, normalizeBoardThemeIndex } from './board-theme'
 import { syncWxTheme } from '@/wx/wx-theme'
 
 const CSS_VAR_KEYS = [
@@ -46,12 +46,12 @@ export function applyUiTheme(index: number): void {
 }
 
 export function applyUiThemeFromSettings(boardThemeIndex?: number): void {
-  applyUiTheme(normalizeBoardThemeIndex(boardThemeIndex ?? 0))
+  applyUiTheme(normalizeBoardThemeIndex(boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX))
 }
 
 /** Web CSS + 微信色板一并切换 */
 export function syncThemePack(boardThemeIndex?: number): void {
-  const index = normalizeBoardThemeIndex(boardThemeIndex ?? 0)
+  const index = normalizeBoardThemeIndex(boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX)
   applyUiTheme(index)
   syncWxTheme(index)
 }

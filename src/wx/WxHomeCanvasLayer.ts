@@ -13,7 +13,11 @@ import {
   type WxCanvasBakeState,
 } from '@/wx/wx-canvas-bake'
 import { getWxCanvas2dContext, getWxHomeVisualCanvas, getWxSharedOffscreenCanvas, wxHomeVisualUsesSharedCanvas } from '@/wx/canvas'
+import { PATH_MAIN_ANIM_SEC } from '@/canvas-home/preview-path-animation'
 import { wxHomeAnimFrame, wxHomePreviewFrame } from '@/wx/wx-home-anim'
+
+/** 静态首帧用 settled 时刻，避免冷启动只露蛇头再「长出来」 */
+const WX_HOME_STATIC_PREVIEW_T = PATH_MAIN_ANIM_SEC * 0.5
 
 /** 微信首页视觉层 — 动效用 CanvasSource，静态首帧用 Image 烘焙 */
 export class WxHomeCanvasLayer extends Sprite {
@@ -42,7 +46,23 @@ export class WxHomeCanvasLayer extends Sprite {
     safeTop: number,
     layout: HomeLayout,
   ): HomeVisualHitRects | null {
-    return this.scheduleBake(screenW, screenH, safeTop, layout, 0, false)
+    const t = isWxMiniGame() ? WX_HOME_STATIC_PREVIEW_T : 0
+    return this.scheduleBake(screenW, screenH, safeTop, layout, t, false)
+  }
+
+  /** 冷启动 — 等待静态视觉层烘焙完成 */
+  ensureReady(): Promise<void> {
+    if (this.baking) return this.baking
+    if (this.pending) void this.ensureBaked()
+    if (this.baking) return this.baking
+    if (this.bakeState.texture) return Promise.resolve()
+    return new Promise((resolve) => {
+      const prev = this.onTextureReady
+      this.onTextureReady = () => {
+        prev?.()
+        resolve()
+      }
+    })
   }
 
   refreshAnimated(
@@ -62,6 +82,11 @@ export class WxHomeCanvasLayer extends Sprite {
   invalidateBakedTexture(): void {
     this.cacheKey = ''
     invalidateWxCanvasBake(this, this.bakeState)
+  }
+
+  /** 切前台软刷新 — 保留当前纹理，异步重烘焙 */
+  requestTextureRefresh(): void {
+    this.cacheKey = ''
   }
 
   private layoutKey(screenW: number, screenH: number, safeTop: number, layout: HomeLayout): string {

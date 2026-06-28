@@ -1,17 +1,32 @@
-/** 微信主屏 Canvas（首次 wx.createCanvas() 为上屏，须在 env-polyfills 中初始化） */
-let mainCanvas: WechatMinigame.Canvas | null = null
+/**
+ * 主包 (IIFE) 与对局分包 (CJS) 各有一份 canvas 模块副本；
+ * 离屏 canvas 须挂在 globalThis，否则分包 HUD 会重复 create 并耗尽配额。
+ */
+const WX_CANVAS_STORE_KEY = '__WX_CANVAS_STORE__'
 
-/** UI 烘焙共享离屏 2d（串行绘制 → Image 纹理） */
-let sharedOffscreen2d: WechatMinigame.Canvas | null = null
+interface WxCanvasStore {
+  mainCanvas: WechatMinigame.Canvas | null
+  sharedOffscreen2d: WechatMinigame.Canvas | null
+  pixiPoolOffscreen2d: WechatMinigame.Canvas | null
+  webglProbeCanvas: WechatMinigame.Canvas | null
+  homeVisualAnimCanvas: WechatMinigame.Canvas | null
+  homeVisualUsesSharedCanvas: boolean
+}
 
-/** Pixi CanvasPool / DOMAdapter 专用离屏 2d，与 UI 烘焙分离 */
-let pixiPoolOffscreen2d: WechatMinigame.Canvas | null = null
-
-/** Pixi isWebGLSupported / WebGL 内部探测专用（iOS 离屏 2d 无法 probe webgl） */
-let webglProbeCanvas: WechatMinigame.Canvas | null = null
-
-/** 首页视觉动效专用离屏 canvas（CanvasSource 直出，避免与 UI 文字烘焙争用） */
-let homeVisualAnimCanvas: WechatMinigame.Canvas | null = null
+function wxCanvasStore(): WxCanvasStore {
+  const g = globalThis as typeof globalThis & { [WX_CANVAS_STORE_KEY]?: WxCanvasStore }
+  if (!g[WX_CANVAS_STORE_KEY]) {
+    g[WX_CANVAS_STORE_KEY] = {
+      mainCanvas: null,
+      sharedOffscreen2d: null,
+      pixiPoolOffscreen2d: null,
+      webglProbeCanvas: null,
+      homeVisualAnimCanvas: null,
+      homeVisualUsesSharedCanvas: false,
+    }
+  }
+  return g[WX_CANVAS_STORE_KEY]!
+}
 
 type WxCanvasLike = WechatMinigame.Canvas & {
   getContext?: (type: string, opts?: unknown) => CanvasRenderingContext2D | null
@@ -113,9 +128,9 @@ export function installWxCanvasPrototypeGetContext(seed?: WxCanvasLike): void {
   }
 
   tryAdd(seed)
-  tryAdd(mainCanvas)
-  tryAdd(sharedOffscreen2d)
-  tryAdd(homeVisualAnimCanvas)
+  tryAdd(wxCanvasStore().mainCanvas)
+  tryAdd(wxCanvasStore().sharedOffscreen2d)
+  tryAdd(wxCanvasStore().homeVisualAnimCanvas)
 
   const g = globalThis as typeof globalThis & {
     OffscreenCanvas?: { prototype?: object }
@@ -279,10 +294,11 @@ function createWxOffscreen2d(width = 1, height = 1): WechatMinigame.Canvas {
 }
 
 export function setWxMainCanvas(canvas: WechatMinigame.Canvas): void {
-  mainCanvas = ensureWxCanvasGetContext(canvas) as WechatMinigame.Canvas
+  wxCanvasStore().mainCanvas = ensureWxCanvasGetContext(canvas) as WechatMinigame.Canvas
 }
 
 export function getWxMainCanvas(): WechatMinigame.Canvas {
+  const { mainCanvas } = wxCanvasStore()
   if (!mainCanvas) {
     throw new Error('微信主 Canvas 未初始化')
   }
@@ -299,17 +315,18 @@ export interface WxPixiInitConfig {
 const WX_WEBGL_OPTS = { stencil: true } as const
 
 export function getWxWebglProbeCanvas(): WechatMinigame.Canvas {
-  if (webglProbeCanvas && canUseWxWebglCanvas(webglProbeCanvas)) {
-    return webglProbeCanvas
+  const store = wxCanvasStore()
+  if (store.webglProbeCanvas && canUseWxWebglCanvas(store.webglProbeCanvas)) {
+    return store.webglProbeCanvas
   }
   if (typeof wx === 'undefined') {
     throw new Error('微信 WebGL 探测 canvas 不可用')
   }
-  webglProbeCanvas = ensureWxCanvasGetContext(wx.createCanvas())
-  installWxCanvasPrototypeGetContext(webglProbeCanvas)
-  webglProbeCanvas.width = Math.max(1, webglProbeCanvas.width || 1)
-  webglProbeCanvas.height = Math.max(1, webglProbeCanvas.height || 1)
-  return webglProbeCanvas
+  store.webglProbeCanvas = ensureWxCanvasGetContext(wx.createCanvas())
+  installWxCanvasPrototypeGetContext(store.webglProbeCanvas)
+  store.webglProbeCanvas.width = Math.max(1, store.webglProbeCanvas.width || 1)
+  store.webglProbeCanvas.height = Math.max(1, store.webglProbeCanvas.height || 1)
+  return store.webglProbeCanvas
 }
 
 export function markWxWebglSupported(): void {
@@ -385,13 +402,14 @@ export function resolveWxPixiInit(): WxPixiInitConfig {
  * 必须与 UI 烘焙 canvas 分离，否则滤镜/文字与 HUD 烘焙互相 resize 导致 context 变 null。
  */
 export function getWxPixiPoolCanvas(): WechatMinigame.Canvas {
-  if (pixiPoolOffscreen2d && canUseWx2dCanvas(pixiPoolOffscreen2d)) {
-    return pixiPoolOffscreen2d
+  const store = wxCanvasStore()
+  if (store.pixiPoolOffscreen2d && canUseWx2dCanvas(store.pixiPoolOffscreen2d)) {
+    return store.pixiPoolOffscreen2d
   }
   try {
-    pixiPoolOffscreen2d = createWxOffscreen2d(1, 1)
-    installWxCanvasPrototypeGetContext(pixiPoolOffscreen2d)
-    return pixiPoolOffscreen2d
+    store.pixiPoolOffscreen2d = createWxOffscreen2d(1, 1)
+    installWxCanvasPrototypeGetContext(store.pixiPoolOffscreen2d)
+    return store.pixiPoolOffscreen2d
   } catch {
     /* 离屏配额不足时回退共享 canvas（仍比与 UI 并发 resize 好） */
   }
@@ -403,11 +421,14 @@ export function getWxPixiPoolCanvas(): WechatMinigame.Canvas {
  * 与 Pixi 渲染 canvas 分离，避免 iOS 上互相覆盖。
  */
 export function getWxSharedOffscreenCanvas(): WechatMinigame.Canvas {
-  if (sharedOffscreen2d && canUseWx2dCanvas(sharedOffscreen2d)) return sharedOffscreen2d
+  const store = wxCanvasStore()
+  if (store.sharedOffscreen2d && canUseWx2dCanvas(store.sharedOffscreen2d)) {
+    return store.sharedOffscreen2d
+  }
 
   try {
-    sharedOffscreen2d = createWxOffscreen2d(1, 1)
-    return sharedOffscreen2d
+    store.sharedOffscreen2d = createWxOffscreen2d(1, 1)
+    return store.sharedOffscreen2d
   } catch {
     /* 微信离屏 2d 配额可能不足 */
   }
@@ -441,31 +462,29 @@ export function assertWxCanvasStackReady(): void {
   }
 }
 
-/** 首页动效是否已与 UI 烘焙共用 staging canvas（微信离屏 2d 配额不足时） */
-let homeVisualUsesSharedCanvas = false
-
 /** 首页动效层 — 优先独立离屏 canvas；配额不足时与 UI 烘焙共用 staging */
 export function getWxHomeVisualCanvas(): WechatMinigame.Canvas {
-  if (homeVisualUsesSharedCanvas) {
+  const store = wxCanvasStore()
+  if (store.homeVisualUsesSharedCanvas) {
     return getWxSharedOffscreenCanvas()
   }
-  if (homeVisualAnimCanvas && canUseWx2dCanvas(homeVisualAnimCanvas)) {
-    return homeVisualAnimCanvas
+  if (store.homeVisualAnimCanvas && canUseWx2dCanvas(store.homeVisualAnimCanvas)) {
+    return store.homeVisualAnimCanvas
   }
   try {
-    homeVisualAnimCanvas = createWxOffscreen2d(1, 1)
-    installWxCanvasPrototypeGetContext(homeVisualAnimCanvas)
-    return homeVisualAnimCanvas
+    store.homeVisualAnimCanvas = createWxOffscreen2d(1, 1)
+    installWxCanvasPrototypeGetContext(store.homeVisualAnimCanvas)
+    return store.homeVisualAnimCanvas
   } catch {
     /* 微信真机/开发者工具常仅 1 个离屏 2d，与 UI 烘焙串行共用 */
-    homeVisualUsesSharedCanvas = true
-    homeVisualAnimCanvas = null
+    store.homeVisualUsesSharedCanvas = true
+    store.homeVisualAnimCanvas = null
     return getWxSharedOffscreenCanvas()
   }
 }
 
 export function wxHomeVisualUsesSharedCanvas(): boolean {
-  return homeVisualUsesSharedCanvas
+  return wxCanvasStore().homeVisualUsesSharedCanvas
 }
 
 /** @deprecated 与 shared 共用同一离屏 canvas */

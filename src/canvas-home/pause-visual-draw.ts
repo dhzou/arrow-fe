@@ -1,11 +1,16 @@
 import {
   drawGameIcon2d,
-  drawGlow,
+  drawModalBackdrop,
   fillTextCenter,
   hexCss,
   roundRectPath,
 } from '@/canvas-home/canvas2d-draw'
 import type { Rect } from '@/canvas-home/home-layout'
+import {
+  drawUiPrimaryBg,
+  drawUiSecondaryBg,
+  UI_BTN,
+} from '@/canvas-home/ui-button-system'
 import { isWxMiniGame } from '@/platform'
 import { wxCanvasFontFamily } from '@/wx/wx-canvas-text'
 import { WX_THEME } from '@/wx/wx-theme'
@@ -29,23 +34,12 @@ function drawLabeledButton(
   variant: 'primary' | 'secondary' | 'ghost',
 ): void {
   const cy = rect.y + rect.h / 2
-  const pillR = rect.h / 2
+  const radius = variant === 'ghost' ? UI_BTN.modalRadius : UI_BTN.primaryRadius
 
   if (variant === 'primary') {
-    const grad = ctx.createLinearGradient(rect.x, rect.y, rect.x + rect.w, rect.y)
-    grad.addColorStop(0, hexCss(WX_THEME.accent))
-    grad.addColorStop(1, hexCss(WX_THEME.accent2))
-    ctx.fillStyle = grad
-    roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, pillR)
-    ctx.fill()
+    drawUiPrimaryBg(ctx, rect, radius)
   } else if (variant === 'secondary') {
-    ctx.fillStyle = hexCss(WX_THEME.glass, 0.06)
-    roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, pillR)
-    ctx.fill()
-    ctx.strokeStyle = hexCss(WX_THEME.glassBorder, 0.12)
-    ctx.lineWidth = 1
-    roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, pillR)
-    ctx.stroke()
+    drawUiSecondaryBg(ctx, rect, radius)
   }
 
   const iconSize = 16
@@ -84,26 +78,23 @@ export function drawPauseVisual(
   h: number,
   levelLabel: string,
 ): { hits: PauseHitRects } {
-  ctx.fillStyle = 'rgba(0,0,0,0.65)'
-  ctx.fillRect(0, 0, w, h)
+  drawModalBackdrop(ctx, w, h)
 
   const padX = 24
   const padTop = 28
   const pw = Math.min(320, w - 48)
   const btnW = pw - padX * 2
-  const btnHPill = 48
+  const btnHPill = UI_BTN.primaryH
   const btnGhostH = 40
   const ph = padTop + 72 + 12 + 22 + 8 + 20 + 24 + btnHPill + 10 + btnHPill + 10 + btnGhostH + 28
   const px = (w - pw) / 2
   const py = (h - ph) / 2
   const cx = w / 2
 
-  drawGlow(ctx, cx, py + ph / 2, pw * 0.55, WX_THEME.accent, 0.12)
-
-  ctx.fillStyle = hexCss(WX_THEME.surfaceStrong, 0.98)
+  ctx.fillStyle = hexCss(WX_THEME.surfaceStrong, WX_THEME.surfaceStrongAlpha)
   roundRectPath(ctx, px, py, pw, ph, 20)
   ctx.fill()
-  ctx.strokeStyle = hexCss(WX_THEME.accent, 0.35)
+  ctx.strokeStyle = hexCss(WX_THEME.accent, 0.28)
   ctx.lineWidth = 1
   roundRectPath(ctx, px, py, pw, ph, 20)
   ctx.stroke()

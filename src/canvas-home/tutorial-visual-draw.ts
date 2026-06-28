@@ -1,5 +1,6 @@
 import {
   drawGameIcon2d,
+  drawModalBackdrop,
   fillGlassPanelAccent,
   hexCss,
   roundRectPath,
@@ -112,8 +113,7 @@ export function drawTutorialVisual(
   step: number,
   animT = 0,
 ): { layout: ReturnType<typeof computeTutorialLayout>; hits: TutorialHitRects } {
-  ctx.fillStyle = 'rgba(0,0,0,0.55)'
-  ctx.fillRect(0, 0, w, h)
+  drawModalBackdrop(ctx, w, h)
 
   const layout = computeTutorialLayout(w, h, safeBottom, step, (text) => measureBodyText(ctx, text))
   const content = TUTORIAL_STEPS[step - 1] ?? TUTORIAL_STEPS[0]!
@@ -121,14 +121,14 @@ export function drawTutorialVisual(
   const cx = card.x + card.w / 2
 
   fillGlassPanelAccent(ctx, card.x, card.y, card.w, card.h, TUTORIAL_CARD_R, WX_THEME.border)
-  ctx.strokeStyle = hexCss(WX_THEME.border, 0.45)
+  ctx.strokeStyle = hexCss(WX_THEME.border, WX_THEME.borderAlpha * 0.8)
   ctx.lineWidth = 1
   roundRectPath(ctx, card.x, card.y, card.w, card.h, TUTORIAL_CARD_R)
   ctx.stroke()
 
   const floatY = Math.sin(animT * ((Math.PI * 2) / 2.8)) * 4
   const iconCy = layout.iconCy + floatY
-  ctx.fillStyle = 'rgba(77,238,234,0.12)'
+  ctx.fillStyle = hexCss(WX_THEME.accent, 0.12)
   ctx.beginPath()
   ctx.arc(cx, iconCy, TUTORIAL_ICON_SIZE / 2, 0, Math.PI * 2)
   ctx.fill()
@@ -145,7 +145,7 @@ export function drawTutorialVisual(
   ctx.fillText(content.title, cx, layout.titleY)
 
   ctx.font = tutorialFont(BODY_FONT)
-  ctx.fillStyle = '#b8c9dc'
+  ctx.fillStyle = hexCss(WX_THEME.textMuted)
   layout.bodyLines.forEach((line, i) => {
     ctx.fillText(line, cx, layout.bodyY + i * BODY_FONT * BODY_LH + (BODY_FONT * BODY_LH) / 2 - 2)
   })
@@ -156,7 +156,7 @@ export function drawTutorialVisual(
   let dotX = cx - dotsW / 2 + dotR
   for (let i = 1; i <= 3; i++) {
     const active = i === step
-    ctx.fillStyle = active ? hexCss(WX_THEME.accent) : 'rgba(255,255,255,0.2)'
+    ctx.fillStyle = active ? hexCss(WX_THEME.accent) : hexCss(WX_THEME.textDim, 0.45)
     ctx.beginPath()
     ctx.arc(dotX, layout.dotsY, active ? dotR * 1.25 : dotR, 0, Math.PI * 2)
     ctx.fill()

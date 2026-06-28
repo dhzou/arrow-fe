@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import GameIcon from '@/components/icons/GameIcon.vue'
-import { BOARD_THEMES, boardThemeFrameCss, boardThemeHasChromeSplit, boardThemePathCss, getBoardTheme, normalizeBoardThemeIndex } from '@/game/board-theme'
+import { BOARD_THEMES, boardThemeFrameCss, boardThemeHasChromeSplit, boardThemePathCss, DEFAULT_BOARD_THEME_INDEX, normalizeBoardThemeIndex } from '@/game/board-theme'
 import { useProgressStore } from '@/stores/progress'
 import { playSound, resumeAudio } from '@/utils/sound'
 
@@ -11,7 +11,7 @@ const progress = useProgressStore()
 const isDev = import.meta.env.DEV
 
 const boardThemeIndex = computed(() =>
-  normalizeBoardThemeIndex(progress.settings.boardThemeIndex ?? 0),
+  normalizeBoardThemeIndex(progress.settings.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX),
 )
 
 async function goBack() {
@@ -33,6 +33,12 @@ async function goDevLevels() {
   router.push({ name: 'dev-levels' })
 }
 
+async function goDevUi() {
+  await resumeAudio()
+  playSound('tap')
+  router.push({ name: 'dev-ui' })
+}
+
 async function goLevelEditor() {
   await resumeAudio()
   playSound('tap')
@@ -50,7 +56,7 @@ function selectBoardTheme(index: number) {
   <main class="settings">
     <header class="topbar">
       <button class="icon-btn ui-tap" type="button" aria-label="返回" @click="goBack">
-        <GameIcon name="back" :size="18" color="#fff" />
+        <GameIcon name="back" :size="18" class="icon-muted" />
       </button>
       <h1>设置</h1>
       <span />
@@ -102,8 +108,9 @@ function selectBoardTheme(index: number) {
                 class="theme-chip-board"
                 :style="{ background: theme.cssBg }"
               />
+              <span class="theme-chip-path" :style="{ background: boardThemePathCss(theme) }" />
+              <span v-if="boardThemeIndex === index" class="theme-chip-check">✓</span>
             </span>
-            <span class="theme-chip-path" :style="{ background: boardThemePathCss(theme) }" />
             <span class="theme-chip-label">{{ theme.label }}</span>
           </button>
         </div>
@@ -142,6 +149,18 @@ function selectBoardTheme(index: number) {
           </div>
         </div>
         <button class="link ui-tap" type="button" @click="goLevelEditor">进入</button>
+      </div>
+      <div v-if="isDev" class="row">
+        <div class="row-left">
+          <span class="row-icon violet">
+            <GameIcon name="sparkle" :size="20" color="#fff" />
+          </span>
+          <div>
+            <p class="row-title">UI 预览</p>
+            <p class="row-desc">弹窗与主题走查</p>
+          </div>
+        </div>
+        <button class="link ui-tap" type="button" @click="goDevUi">进入</button>
       </div>
       <div class="row danger">
         <div class="row-left">
@@ -205,6 +224,10 @@ function selectBoardTheme(index: number) {
   justify-content: center;
 }
 
+.icon-muted {
+  color: var(--game-text-muted);
+}
+
 .panel {
   border-radius: var(--game-radius);
   border: 1px solid var(--game-border);
@@ -219,7 +242,7 @@ function selectBoardTheme(index: number) {
   align-items: center;
   gap: 12px;
   padding: 16px 18px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid color-mix(in srgb, var(--game-border) 55%, transparent);
 }
 
 .row:last-child {
@@ -263,59 +286,79 @@ function selectBoardTheme(index: number) {
 
 .theme-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   width: 100%;
 }
 
 .theme-chip {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 6px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
+  border: none;
+  background: transparent;
+  padding: 0;
   cursor: pointer;
-  color: var(--game-text-muted);
-}
-
-.theme-chip.active {
-  border-color: rgba(77, 238, 234, 0.55);
-  box-shadow: 0 0 0 1px rgba(77, 238, 234, 0.2);
-  color: var(--game-text);
 }
 
 .theme-chip-bg {
+  display: block;
   position: relative;
-  width: 100%;
-  height: 40px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  height: 44px;
+  border-radius: 10px;
   overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--game-border) 55%, transparent);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.theme-chip.active .theme-chip-bg {
+  border-color: var(--game-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--game-accent) 40%, transparent);
 }
 
 .theme-chip-board {
   position: absolute;
-  left: 5px;
-  right: 5px;
-  top: 5px;
-  height: 14px;
+  left: 4px;
+  right: 4px;
+  top: 4px;
+  height: 42%;
   border-radius: 4px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
 }
 
 .theme-chip-path {
-  width: 70%;
-  height: 4px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 52%;
+  height: 3px;
+  transform: translate(-50%, -50%);
   border-radius: 2px;
 }
 
+.theme-chip-check {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--game-accent);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+}
+
 .theme-chip-label {
-  font-size: 12px;
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--game-text-muted);
+  text-align: center;
+}
+
+.theme-chip.active .theme-chip-label {
+  color: var(--game-text);
   font-weight: 600;
-  line-height: 1.2;
 }
 
 .row-title {

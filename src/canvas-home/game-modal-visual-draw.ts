@@ -1,10 +1,16 @@
 import { SHARE_LIFE, SHARE_TIME } from '@/game/game-ui-content'
 import {
+  drawUiPrimaryBg,
+  drawUiSecondaryBg,
+  UI_BTN,
+} from '@/canvas-home/ui-button-system'
+import {
   drawGameIcon2d,
-  drawGlow,
+  drawModalBackdrop,
   fillHGradient,
   fillTextCenter,
   hexCss,
+  mixHex,
   roundRectPath,
 } from '@/canvas-home/canvas2d-draw'
 import type { Rect } from '@/canvas-home/home-layout'
@@ -96,86 +102,39 @@ function drawIconLabelRow(
 }
 
 function drawCompletePrimaryBtn(ctx: CanvasRenderingContext2D, rect: Rect): void {
-  fillHGradient(ctx, rect.x, rect.y, rect.w, rect.h, WX_THEME.accent, WX_THEME.gradientBlueEnd, rect.h / 2)
-  const cy = rect.y + rect.h / 2
-  const iconSize = 16
+  drawUiPrimaryBg(ctx, rect, UI_BTN.modalRadius)
   ctx.font = modalFont(15, '700')
-  ctx.textBaseline = 'middle'
-  const textW = ctx.measureText('下一关').width
-  const gap = 8
-  const totalW = iconSize + gap + textW
-  let x = rect.x + (rect.w - totalW) / 2
-  drawGameIcon2d(ctx, 'play', x + iconSize / 2, cy, iconSize, WX_THEME.btnTextDark)
   ctx.fillStyle = hexCss(WX_THEME.btnTextDark)
-  ctx.textAlign = 'left'
-  ctx.fillText('下一关', x + iconSize + gap, cy)
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'center'
+  ctx.fillText('下一关', rect.x + rect.w / 2, rect.y + rect.h / 2)
 }
 
 function drawCompleteGhostBtn(ctx: CanvasRenderingContext2D, rect: Rect): void {
-  const pillR = rect.h / 2
-  ctx.fillStyle = hexCss(WX_THEME.glass, 0.06)
-  roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, pillR)
-  ctx.fill()
-  const cy = rect.y + rect.h / 2
-  const iconSize = 16
+  drawUiSecondaryBg(ctx, rect, UI_BTN.modalRadius)
   ctx.font = modalFont(15)
-  ctx.textBaseline = 'middle'
-  const textW = ctx.measureText('回到首页').width
-  const gap = 8
-  const totalW = iconSize + gap + textW
-  let x = rect.x + (rect.w - totalW) / 2
-  drawGameIcon2d(ctx, 'home', x + iconSize / 2, cy, iconSize, WX_THEME.textMuted)
   ctx.fillStyle = hexCss(WX_THEME.textMuted)
-  ctx.textAlign = 'left'
-  ctx.fillText('回到首页', x + iconSize + gap, cy)
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'center'
+  ctx.fillText('回到首页', rect.x + rect.w / 2, rect.y + rect.h / 2)
 }
 
 function drawFailedPrimaryBtn(ctx: CanvasRenderingContext2D, rect: Rect): void {
-  fillHGradient(
-    ctx,
-    rect.x,
-    rect.y,
-    rect.w,
-    rect.h,
-    WX_THEME.accent,
-    WX_THEME.accent2,
-    rect.h / 2,
-  )
-  const cy = rect.y + rect.h / 2
-  const iconSize = 16
+  drawUiPrimaryBg(ctx, rect, UI_BTN.modalRadius)
   ctx.font = modalFont(16, '600')
-  ctx.textBaseline = 'middle'
-  const textW = ctx.measureText('重新挑战').width
-  const gap = 8
-  const totalW = iconSize + gap + textW
-  let x = rect.x + (rect.w - totalW) / 2
-  drawGameIcon2d(ctx, 'reset', x + iconSize / 2, cy, iconSize, WX_THEME.btnTextDark)
   ctx.fillStyle = hexCss(WX_THEME.btnTextDark)
-  ctx.textAlign = 'left'
-  ctx.fillText('重新挑战', x + iconSize + gap, cy)
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'center'
+  ctx.fillText('重新挑战', rect.x + rect.w / 2, rect.y + rect.h / 2)
 }
 
 function drawFailedSecondaryBtn(ctx: CanvasRenderingContext2D, rect: Rect): void {
-  const pillR = rect.h / 2
-  ctx.fillStyle = hexCss(WX_THEME.glass, 0.06)
-  roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, pillR)
-  ctx.fill()
-  ctx.strokeStyle = hexCss(WX_THEME.glassBorder, 0.12)
-  ctx.lineWidth = 1
-  roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, pillR)
-  ctx.stroke()
-  const cy = rect.y + rect.h / 2
-  const iconSize = 16
+  drawUiSecondaryBg(ctx, rect, UI_BTN.modalRadius)
   ctx.font = modalFont(16)
-  ctx.textBaseline = 'middle'
-  const textW = ctx.measureText('回到首页').width
-  const gap = 8
-  const totalW = iconSize + gap + textW
-  let x = rect.x + (rect.w - totalW) / 2
-  drawGameIcon2d(ctx, 'home', x + iconSize / 2, cy, iconSize, WX_THEME.textMuted)
   ctx.fillStyle = hexCss(WX_THEME.textMuted)
-  ctx.textAlign = 'left'
-  ctx.fillText('回到首页', x + iconSize + gap, cy)
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'center'
+  ctx.fillText('回到首页', rect.x + rect.w / 2, rect.y + rect.h / 2)
 }
 
 /** 对齐 LevelCompleteModal.vue */
@@ -188,8 +147,7 @@ export function drawCompleteVisual(
   winStreak: number,
   animT = 0,
 ): { hits: GameModalHitRects } {
-  ctx.fillStyle = 'rgba(0,0,0,0.65)'
-  ctx.fillRect(0, 0, w, h)
+  drawModalBackdrop(ctx, w, h)
   drawConfetti(ctx, w, h, animT)
 
   const padX = 20
@@ -229,12 +187,10 @@ export function drawCompleteVisual(
   ctx.scale(modalScale, modalScale)
   ctx.translate(-cx, -modalCy)
 
-  drawGlow(ctx, cx, modalCy, pw * 0.55, WX_THEME.accent, 0.12)
-
-  ctx.fillStyle = hexCss(WX_THEME.surfaceStrong, 0.98)
+  ctx.fillStyle = hexCss(WX_THEME.surfaceStrong, WX_THEME.surfaceStrongAlpha)
   roundRectPath(ctx, px, py, pw, ph, 20)
   ctx.fill()
-  ctx.strokeStyle = hexCss(WX_THEME.accent, 0.35)
+  ctx.strokeStyle = hexCss(WX_THEME.border, WX_THEME.borderAlpha * 0.8)
   ctx.lineWidth = 1
   roundRectPath(ctx, px, py, pw, ph, 20)
   ctx.stroke()
@@ -249,7 +205,7 @@ export function drawCompleteVisual(
   const medalCy = y + medalFloatY
   const medalGrad = ctx.createLinearGradient(cx - 40, medalCy - 40, cx + 40, medalCy + 40)
   medalGrad.addColorStop(0, hexCss(WX_THEME.warn))
-  medalGrad.addColorStop(1, hexCss(WX_THEME.gradientWarmEnd))
+  medalGrad.addColorStop(1, hexCss(WX_THEME.iconAssist))
   ctx.fillStyle = medalGrad
   ctx.beginPath()
   ctx.arc(cx, medalCy, 40, 0, Math.PI * 2)
@@ -262,7 +218,7 @@ export function drawCompleteVisual(
   const starsW = starSize * 3 + starGap * 2
   let starX = cx - starsW / 2 + starSize / 2
   for (let i = 0; i < 3; i++) {
-    drawGameIcon2d(ctx, 'star', starX, y, starSize, WX_THEME.warn)
+    drawGameIcon2d(ctx, 'star', starX, y, starSize, WX_THEME.hintRing)
     starX += starSize + starGap
   }
 
@@ -283,7 +239,7 @@ export function drawCompleteVisual(
   ctx.textBaseline = 'middle'
   ctx.fillText(stat0, statX + iconSize + statInnerGap, y)
   statX += iconSize + statInnerGap + stat0W + statGap
-  drawGameIcon2d(ctx, 'combo', statX + iconSize / 2, y, iconSize, 0x8aa0b8)
+  drawGameIcon2d(ctx, 'combo', statX + iconSize / 2, y, iconSize, WX_THEME.textMuted)
   ctx.fillText(stat1, statX + iconSize + statInnerGap, y)
 
   y += 13 + 20
@@ -305,7 +261,7 @@ function drawFailedShareTimeBtn(
   rect: Rect,
   remaining: number,
 ): void {
-  fillHGradient(ctx, rect.x, rect.y, rect.w, rect.h, WX_THEME.warn, WX_THEME.gradientWarmEnd, rect.h / 2)
+  fillHGradient(ctx, rect.x, rect.y, rect.w, rect.h, WX_THEME.warn, WX_THEME.iconAssist, rect.h / 2)
   const label = `${SHARE_TIME.confirmText}（剩 ${remaining} 次）`
   const cy = rect.y + rect.h / 2
   const iconSize = 16
@@ -354,8 +310,7 @@ export function drawFailedVisual(
   shareTimeRemaining = 0,
   shareLifeRemaining = 0,
 ): { hits: GameModalHitRects } {
-  ctx.fillStyle = 'rgba(0,0,0,0.65)'
-  ctx.fillRect(0, 0, w, h)
+  drawModalBackdrop(ctx, w, h)
 
   const padX = 24
   const padTop = 28
@@ -394,12 +349,10 @@ export function drawFailedVisual(
   const cx = w / 2
   const themeAccent = reason === 'time' ? WX_THEME.warn : WX_THEME.danger
 
-  drawGlow(ctx, cx, py + ph / 2, pw * 0.52, themeAccent, 0.12)
-
-  ctx.fillStyle = hexCss(WX_THEME.surfaceStrong, 0.98)
+  ctx.fillStyle = hexCss(WX_THEME.surfaceStrong, WX_THEME.surfaceStrongAlpha)
   roundRectPath(ctx, px, py, pw, ph, 20)
   ctx.fill()
-  ctx.strokeStyle = hexCss(themeAccent, 0.35)
+  ctx.strokeStyle = hexCss(themeAccent, 0.28)
   ctx.lineWidth = 1
   roundRectPath(ctx, px, py, pw, ph, 20)
   ctx.stroke()
@@ -412,14 +365,14 @@ export function drawFailedVisual(
   if (reason === 'time') {
     drawGameIcon2d(ctx, 'sparkle', cx, iconCy, 36, WX_THEME.warn)
   } else {
-    drawGameIcon2d(ctx, 'heart', cx, iconCy, 36, WX_THEME.danger, 0.45)
+    drawGameIcon2d(ctx, 'heart-outline', cx, iconCy, 36, WX_THEME.danger)
   }
 
   const titleY = py + padTop + 72 + 12 + 11
   fillTextCenter(ctx, title, cx, titleY, {
     fontSize: 22,
     fontWeight: '700',
-    fill: hexCss(WX_THEME.text),
+    fill: hexCss(mixHex(themeAccent, WX_THEME.text)),
   })
   fillTextCenter(ctx, levelLabel, cx, titleY + 30, {
     fontSize: 14,

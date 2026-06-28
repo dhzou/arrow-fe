@@ -9,12 +9,40 @@ import {
 } from '@/canvas-home/game-icon-paths'
 import { isWxMiniGame } from '@/platform'
 import { wxCanvasFontFamily } from '@/wx/wx-canvas-text'
+import { WX_THEME } from '@/wx/wx-theme'
+
+/** 对齐 Web `--game-overlay`（game-theme.css） */
+export const MODAL_OVERLAY_CSS = 'rgba(28, 36, 48, 0.4)'
+export const MODAL_OVERLAY_RGB = 0x1c2430
+export const MODAL_OVERLAY_ALPHA = 0.4
+
+export function drawModalBackdrop(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.fillStyle = MODAL_OVERLAY_CSS
+  ctx.fillRect(0, 0, w, h)
+}
 
 export function hexCss(n: number, alpha = 1): string {
   const r = (n >> 16) & 0xff
   const g = (n >> 8) & 0xff
   const b = n & 0xff
   return alpha >= 1 ? `rgb(${r},${g},${b})` : `rgba(${r},${g},${b},${alpha})`
+}
+
+/** 对齐 Web `color-mix(in srgb, a 88%, b)` */
+export function mixHex(a: number, b: number, ratioA = 0.88): number {
+  const ar = (a >> 16) & 0xff
+  const ag = (a >> 8) & 0xff
+  const ab = a & 0xff
+  const br = (b >> 16) & 0xff
+  const bg = (b >> 8) & 0xff
+  const bb = b & 0xff
+  const t = Math.min(1, Math.max(0, ratioA))
+  const u = 1 - t
+  return (
+    (Math.round(ar * t + br * u) << 16) |
+    (Math.round(ag * t + bg * u) << 8) |
+    Math.round(ab * t + bb * u)
+  )
 }
 
 export function roundRectPath(
@@ -35,10 +63,10 @@ export function roundRectPath(
   ctx.closePath()
 }
 
-/** 对齐 HomeView .stripes：repeating-linear-gradient(135deg, … 16px / 32px) */
-export function drawStripes(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+/** 对齐 HomeView .stripes — 浅色底用 accent 细纹 */
+export function drawStripes(ctx: CanvasRenderingContext2D, w: number, h: number, accent?: number): void {
   ctx.save()
-  ctx.fillStyle = 'rgba(255,255,255,0.018)'
+  ctx.fillStyle = accent !== undefined ? hexCss(accent, 0.035) : 'rgba(255,255,255,0.018)'
   const stripe = 16
   const period = 32
   const span = Math.ceil(Math.hypot(w, h)) + period * 2
@@ -159,10 +187,28 @@ export function fillGlassPanel(
   h: number,
   r: number,
 ): void {
-  ctx.fillStyle = 'rgba(255,255,255,0.06)'
+  ctx.fillStyle = hexCss(WX_THEME.glass, WX_THEME.glassAlpha)
   roundRectPath(ctx, x, y, w, h, r)
   ctx.fill()
-  ctx.strokeStyle = 'rgba(255,255,255,0.12)'
+  ctx.strokeStyle = hexCss(WX_THEME.glassBorder, WX_THEME.glassBorderAlpha)
+  ctx.lineWidth = 1
+  roundRectPath(ctx, x, y, w, h, r)
+  ctx.stroke()
+}
+
+/** 进度卡片等 — 对齐 Web `--game-surface` */
+export function fillSurfacePanel(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  ctx.fillStyle = hexCss(WX_THEME.surface, WX_THEME.surfaceAlpha)
+  roundRectPath(ctx, x, y, w, h, r)
+  ctx.fill()
+  ctx.strokeStyle = hexCss(WX_THEME.border, WX_THEME.borderAlpha * 0.7)
   ctx.lineWidth = 1
   roundRectPath(ctx, x, y, w, h, r)
   ctx.stroke()
@@ -177,10 +223,10 @@ export function fillGlassPanelAccent(
   r: number,
   borderColor: number,
 ): void {
-  ctx.fillStyle = 'rgba(12,24,42,0.92)'
+  ctx.fillStyle = hexCss(WX_THEME.surfaceStrong, WX_THEME.surfaceStrongAlpha)
   roundRectPath(ctx, x, y, w, h, r)
   ctx.fill()
-  ctx.strokeStyle = hexCss(borderColor, 0.22)
+  ctx.strokeStyle = hexCss(borderColor, WX_THEME.borderAlpha * 0.75)
   ctx.lineWidth = 1
   roundRectPath(ctx, x, y, w, h, r)
   ctx.stroke()
@@ -300,8 +346,11 @@ export function drawGameIcon2d(
       break
     }
     case 'pause': {
-      ctx.fillRect(cx - 9, cy - 16, 4, 32)
-      ctx.fillRect(cx + 5, cy - 16, 4, 32)
+      const barW = size / 8
+      const barH = size / 2
+      const gap = size / 8
+      ctx.fillRect(cx - barW - gap / 2, cy - barH / 2, barW, barH)
+      ctx.fillRect(cx + gap / 2, cy - barH / 2, barW, barH)
       break
     }
     case 'hint': {
@@ -426,6 +475,9 @@ export function drawGameIcon2d(
       const hs = size / 20
       ctx.beginPath()
       ctx.arc(cx - 4.5 * hs, cy - 1.5 * hs, 5.5 * hs, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.beginPath()
+      ctx.arc(cx + 4.5 * hs, cy - 1.5 * hs, 5.5 * hs, 0, Math.PI * 2)
       ctx.fill()
       ctx.beginPath()
       ctx.moveTo(cx - 9 * hs, cy + 1 * hs)

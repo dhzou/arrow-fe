@@ -51,7 +51,6 @@ const shareLifeButtonLabel = computed(
           class="btn share-life ui-tap"
           @click="emit('shareLife')"
         >
-          <GameIcon name="heart-outline" :size="16" :color="'var(--game-bg)'" />
           {{ shareLifeButtonLabel }}
         </button>
         <button
@@ -59,17 +58,10 @@ const shareLifeButtonLabel = computed(
           class="btn share-time ui-tap"
           @click="emit('shareTime')"
         >
-          <GameIcon name="sparkle" :size="16" :color="'var(--game-bg)'" />
           {{ shareTimeButtonLabel }}
         </button>
-        <button class="btn primary ui-tap" @click="emit('replay')">
-          <GameIcon name="reset" :size="16" :color="'var(--game-bg)'" />
-          重新挑战
-        </button>
-        <button class="btn secondary ui-tap" @click="emit('home')">
-          <GameIcon name="home" :size="16" :color="'var(--game-text-muted)'" />
-          回到首页
-        </button>
+        <button class="btn primary ui-tap" @click="emit('replay')">重新挑战</button>
+        <button class="btn secondary ui-tap" @click="emit('home')">回到首页</button>
       </div>
     </div>
   </div>
@@ -79,12 +71,13 @@ const shareLifeButtonLabel = computed(
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.65);
+  background: var(--game-overlay, rgba(28, 36, 48, 0.4));
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 30;
   padding: 24px;
+  backdrop-filter: blur(4px);
 }
 
 .modal {
@@ -92,28 +85,19 @@ const shareLifeButtonLabel = computed(
   max-width: 320px;
   padding: 28px 24px;
   border-radius: 20px;
-  border: 1px solid color-mix(in srgb, var(--game-danger) 35%, transparent);
+  border: 1px solid color-mix(in srgb, var(--game-danger) 28%, transparent);
   background: var(--game-surface-strong);
   color: var(--game-text);
   text-align: center;
-  box-shadow:
-    0 0 24px color-mix(in srgb, var(--game-danger) 12%, transparent),
-    var(--game-shadow);
-  backdrop-filter: blur(12px);
+  box-shadow: var(--game-shadow);
 }
 
 .modal--time {
-  border-color: color-mix(in srgb, var(--game-warn) 35%, transparent);
-  box-shadow:
-    0 0 24px color-mix(in srgb, var(--game-warn) 12%, transparent),
-    var(--game-shadow);
+  border-color: color-mix(in srgb, var(--game-warn) 28%, transparent);
 }
 
 .modal--lives {
-  border-color: color-mix(in srgb, var(--game-danger) 35%, transparent);
-  box-shadow:
-    0 0 24px color-mix(in srgb, var(--game-danger) 12%, transparent),
-    var(--game-shadow);
+  border-color: color-mix(in srgb, var(--game-danger) 28%, transparent);
 }
 
 .icon-wrap {
@@ -162,9 +146,9 @@ const shareLifeButtonLabel = computed(
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 14px;
-  border-radius: 999px;
+  min-height: 44px;
+  padding: 12px 16px;
+  border-radius: 12px;
   font-size: 16px;
   cursor: pointer;
 }
@@ -172,27 +156,28 @@ const shareLifeButtonLabel = computed(
 .btn.share-life {
   border: none;
   background: var(--game-gradient);
-  color: var(--game-bg);
+  color: #ffffff;
   font-weight: 600;
 }
 
 .btn.share-time {
-  border: 1px solid color-mix(in srgb, var(--game-warn) 40%, transparent);
+  border: none;
   background: linear-gradient(90deg, var(--game-warn), var(--game-icon-assist));
-  color: var(--game-bg);
+  color: #ffffff;
   font-weight: 600;
 }
 
 .btn.primary {
   border: none;
   background: var(--game-gradient);
-  color: var(--game-bg);
+  color: #ffffff;
   font-weight: 600;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--game-accent) 18%, transparent);
 }
 
 .btn.secondary {
-  border: 1px solid var(--game-glass-border);
-  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--game-border) 55%, transparent);
+  background: color-mix(in srgb, var(--game-glass) 40%, transparent);
   color: var(--game-text-muted);
 }
 </style>

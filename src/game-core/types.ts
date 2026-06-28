@@ -50,6 +50,8 @@ export interface GameSettings {
   soundEnabled: boolean
   /** 路径风棋盘主题索引，见 board-theme.ts */
   boardThemeIndex?: number
+  /** 主题包版本，用于存档迁移 */
+  themePackVersion?: number
 }
 
 export interface DailySignInState {

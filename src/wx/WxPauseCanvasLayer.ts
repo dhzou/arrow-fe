@@ -9,6 +9,7 @@ import {
   type WxCanvasBakeState,
 } from '@/wx/wx-canvas-bake'
 import { getWxSharedOffscreenCanvas, getWxCanvas2dContext } from '@/wx/canvas'
+import { WX_THEME_INDEX } from '@/wx/wx-theme'
 
 /** 微信暂停弹窗 — Canvas 绘制中文 + Image 烘焙 */
 export class WxPauseCanvasLayer extends Sprite {
@@ -16,6 +17,7 @@ export class WxPauseCanvasLayer extends Sprite {
   private cacheKey = ''
   private lastHits: PauseHitRects | null = null
   private baking: Promise<void> | null = null
+  private bakeGeneration = 0
   private pending: { screenW: number; screenH: number; levelLabel: string } | null = null
 
   onTextureReady: (() => void) | null = null
@@ -29,15 +31,21 @@ export class WxPauseCanvasLayer extends Sprite {
       this.visible = false
       return null
     }
-    this.visible = true
     this.width = screenW
     this.height = screenH
 
-    const key = `${screenW}|${screenH}|${levelLabel}`
+    const key = `${screenW}|${screenH}|${levelLabel}|t${WX_THEME_INDEX}`
     if (key !== this.cacheKey) {
       this.cacheKey = key
+      // 主题/布局变化时丢弃旧像素，避免 requestTextureRefresh 后仍短暂显示上一主题
+      if (this.texture !== Texture.EMPTY) {
+        invalidateWxCanvasBake(this, this.bakeState)
+      }
       this.pending = { screenW, screenH, levelLabel }
+      this.visible = false
       void this.ensureBaked()
+    } else {
+      this.visible = true
     }
     return this.lastHits
   }
@@ -47,8 +55,15 @@ export class WxPauseCanvasLayer extends Sprite {
   }
 
   invalidateBakedTexture(): void {
+    this.bakeGeneration++
+    this.pending = null
     this.cacheKey = ''
     invalidateWxCanvasBake(this, this.bakeState)
+  }
+
+  /** 切主题 — 保留纹理先上屏，异步按新 WX_THEME 重烘焙 */
+  requestTextureRefresh(): void {
+    this.cacheKey = ''
   }
 
   private ensureBaked(): Promise<void> {
@@ -64,8 +79,10 @@ export class WxPauseCanvasLayer extends Sprite {
     const p = this.pending
     if (!p) return
     this.pending = null
+    const gen = this.bakeGeneration
 
     await withWxCanvasBakeLock(async () => {
+      if (gen !== this.bakeGeneration) return
       const dpr = Math.min(getPlatform().getDevicePixelRatio(), 2)
       const pixelW = Math.max(1, Math.ceil(p.screenW * dpr))
       const pixelH = Math.max(1, Math.ceil(p.screenH * dpr))
@@ -82,9 +99,11 @@ export class WxPauseCanvasLayer extends Sprite {
       ctx.clearRect(0, 0, p.screenW, p.screenH)
 
       const { hits } = drawPauseVisual(ctx, p.screenW, p.screenH, p.levelLabel)
+      if (gen !== this.bakeGeneration) return
       this.lastHits = hits
 
       await bakeCanvasToImageSprite(this, this.bakeState, canvas, dpr, p.screenW, p.screenH)
+      if (gen !== this.bakeGeneration) return
       this.width = p.screenW
       this.height = p.screenH
       this.onTextureReady?.()

@@ -18,21 +18,20 @@ export const HOME_CSS = {
   h1Line: 39,
   subtitleSize: 13,
   subtitleLine: 16,
-  /** HomeView .hero margin-bottom:22，实测到 preview 需约 30 */
-  heroMb: 30,
-  previewMax: 300,
-  previewVw: 0.78,
-  /** 实测 preview→card 间距约 31px（375 宽） */
-  previewMb: 31,
+  /** hero 区块到 preview 的间距 */
+  heroMb: 24,
+  previewMax: 280,
+  previewVw: 0.72,
+  /** preview → 进度卡 */
+  previewMb: 24,
   previewRadius: 22,
   cardMaxW: 340,
-  cardPadTop: 16,
-  cardPadBottom: 13,
+  cardPadTop: 14,
+  cardPadBottom: 11,
   cardIcon: 28,
-  /** HomeView .level-icon margin-bottom: 6 */
-  cardIconMb: 6,
-  /** 实测 card→chip 间距约 28px */
-  cardMb: 28,
+  cardIconMb: 4,
+  /** 进度卡 → 开始游戏 */
+  cardMb: 16,
   labelSize: 12,
   labelLine: 14,
   levelSize: 32,
@@ -40,18 +39,21 @@ export const HOME_CSS = {
   levelMy: 4,
   subSize: 12,
   subLine: 14,
-  chipGap: 8,
-  chipPadX: 14,
-  chipPadY: 9,
+  chipGap: 10,
+  chipPadX: 12,
+  chipPadY: 7,
   chipIcon: 16,
-  chipInnerGap: 6,
+  chipInnerGap: 5,
   chipFont: 12,
-  chipLine: 37,
-  chipRowMb: 18,
+  chipLine: 32,
+  chipRowMb: 0,
+  /** 开始游戏 → chips */
+  startMb: 14,
   btnMaxW: 340,
-  btnPad: 16,
-  btnFont: 18,
-  btnLine: 57,
+  btnPad: 14,
+  btnFont: 17,
+  btnLine: 48,
+  btnRadius: 12,
 } as const
 
 /** 无 ctx 时估算中文宽度（12px 约 12px/字） */

@@ -119,6 +119,11 @@ export function hudSettingsSize(pathStyle: boolean): number {
   return pathStyle ? GAME_HUD.pathPauseSize : GAME_HUD.pauseSize
 }
 
+/** 顶栏暂停图标像素尺寸（与 GameView pause GameIcon :size 一致） */
+export function hudPauseIconSize(_pathStyle: boolean): number {
+  return 18
+}
+
 /** 顶栏设置图标像素尺寸（外圈与暂停同大，图标略大以便辨认） */
 export function hudSettingsIconSize(pathStyle: boolean): number {
   return pathStyle ? 20 : 22

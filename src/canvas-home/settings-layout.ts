@@ -1,3 +1,5 @@
+import { BOARD_THEMES } from '@/game/board-theme'
+
 export interface Rect {
   x: number
   y: number
@@ -25,9 +27,9 @@ export interface SettingsLayout {
 const PAD = 16
 const BACK = 40
 export const ROW_H = 56
-const THEME_SWATCH_COLS = 3
-const THEME_SWATCH_ROWS = 2
-const THEME_SWATCH_COUNT = THEME_SWATCH_COLS * THEME_SWATCH_ROWS
+const THEME_SWATCH_COLS = 2
+const THEME_SWATCH_COUNT = BOARD_THEMES.length
+const THEME_SWATCH_ROWS = Math.ceil(THEME_SWATCH_COUNT / THEME_SWATCH_COLS)
 const THEME_SWATCH_PAD_X = 18
 const THEME_SWATCH_GAP_X = 10
 const THEME_SWATCH_GAP_Y = 10
@@ -56,7 +58,12 @@ export function settingsResetRowY(panelY: number, showDev: boolean): number {
   return showDev ? settingsDevRowY(panelY) + ROW_H : settingsLevelRowY(panelY) + ROW_H
 }
 
-function computeThemeSwatches(panelX: number, panelW: number, themeRowY: number): Rect[] {
+function computeThemeSwatches(
+  panelX: number,
+  panelW: number,
+  themeRowY: number,
+  swatchTop = THEME_SWATCH_TOP,
+): Rect[] {
   const totalW = panelW - THEME_SWATCH_PAD_X * 2
   const swatchW = (totalW - THEME_SWATCH_GAP_X * (THEME_SWATCH_COLS - 1)) / THEME_SWATCH_COLS
   const startX = panelX + THEME_SWATCH_PAD_X
@@ -65,7 +72,7 @@ function computeThemeSwatches(panelX: number, panelW: number, themeRowY: number)
     const row = Math.floor(i / THEME_SWATCH_COLS)
     return {
       x: startX + col * (swatchW + THEME_SWATCH_GAP_X),
-      y: themeRowY + THEME_SWATCH_TOP + row * (THEME_SWATCH_H + THEME_SWATCH_GAP_Y),
+      y: themeRowY + swatchTop + row * (THEME_SWATCH_H + THEME_SWATCH_GAP_Y),
       w: swatchW,
       h: THEME_SWATCH_H,
     }
@@ -87,29 +94,33 @@ export interface SettingsModalLayout {
 
 /** 微信设置弹窗 — 居中卡片（仅音效 + 主题） */
 export function computeSettingsModalLayout(screenW: number, screenH: number): SettingsModalLayout {
-  const modalW = Math.min(360, screenW - 40)
-  const titleBlock = 56
-  const innerTopGap = 6
-  const innerPad = 4
-  const panelH = titleBlock + innerTopGap + innerPad + ROW_H + THEME_ROW_H + 12
+  const modalW = Math.min(340, screenW - 48)
+  const titleBlock = 48
+  const contentPad = 16
+  const themeLabelH = 28
+  const themeBlockH =
+    themeLabelH +
+    THEME_SWATCH_H * THEME_SWATCH_ROWS +
+    THEME_SWATCH_GAP_Y * (THEME_SWATCH_ROWS - 1) +
+    8
+  const panelH = titleBlock + contentPad + ROW_H + themeBlockH + contentPad
   const panelX = (screenW - modalW) / 2
   const panelY = Math.max(24, (screenH - panelH) / 2)
   const panel: Rect = { x: panelX, y: panelY, w: modalW, h: panelH }
 
   const close: Rect = {
-    x: panelX + modalW - 16 - 32,
-    y: panelY + 12,
-    w: 32,
-    h: 32,
+    x: panelX + modalW - 12 - 28,
+    y: panelY + 10,
+    w: 28,
+    h: 28,
   }
   const titleY = panelY + titleBlock / 2
-  const soundRowY = panelY + titleBlock + innerTopGap + innerPad
+  const soundRowY = panelY + titleBlock + contentPad / 2
 
   const soundRow: Rect = { x: panelX, y: soundRowY, w: modalW, h: ROW_H }
   const themeRowY = soundRowY + ROW_H
-  const actionW = 64
-  const actionH = 36
-  const actionX = panelX + modalW - 18 - actionW
+  const toggleW = 48
+  const toggleH = 28
 
   return {
     panel,
@@ -118,15 +129,15 @@ export function computeSettingsModalLayout(screenW: number, screenH: number): Se
     titleY,
     soundRow,
     soundToggle: {
-      x: actionX,
-      y: soundRow.y + (ROW_H - actionH) / 2,
-      w: actionW,
-      h: actionH,
+      x: panelX + modalW - contentPad - toggleW,
+      y: soundRow.y + (ROW_H - toggleH) / 2,
+      w: toggleW,
+      h: toggleH,
     },
     themeRowY,
-    themeSwatches: computeThemeSwatches(panelX, modalW, themeRowY),
-    rowIconX: panelX + 18 + 20,
-    rowTitleX: panelX + 18 + 40 + 12,
+    themeSwatches: computeThemeSwatches(panelX, modalW, themeRowY, themeLabelH),
+    rowIconX: panelX + contentPad,
+    rowTitleX: panelX + contentPad,
   }
 }
 

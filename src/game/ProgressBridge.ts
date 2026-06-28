@@ -13,7 +13,7 @@ import {
 import * as Sound from '@/utils/sound'
 import type { ProgressPort } from './ProgressPort'
 import type { BoardTheme } from './board-theme'
-import { getBoardTheme, nextBoardThemeIndex, normalizeBoardThemeIndex } from './board-theme'
+import { DEFAULT_BOARD_THEME_INDEX, getBoardTheme, nextBoardThemeIndex, normalizeBoardThemeIndex } from './board-theme'
 import { syncThemePack } from './apply-ui-theme'
 
 /** 微信端与 Pinia 解耦的进度读写 */
@@ -23,7 +23,7 @@ export class ProgressBridge implements ProgressPort {
   constructor() {
     this.data = loadSaveData()
     Sound.setSoundEnabled(this.data.settings.soundEnabled)
-    syncThemePack(this.data.settings.boardThemeIndex ?? 0)
+    syncThemePack(this.data.settings.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX)
   }
 
   get currentLevel(): number {
@@ -43,7 +43,7 @@ export class ProgressBridge implements ProgressPort {
   }
 
   get boardThemeIndex(): number {
-    return normalizeBoardThemeIndex(this.data.settings.boardThemeIndex ?? 0)
+    return normalizeBoardThemeIndex(this.data.settings.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX)
   }
 
   get hintsRemaining(): number {

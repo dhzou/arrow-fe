@@ -1,7 +1,7 @@
 import type { Graphics } from 'pixi.js'
 import type { Rect } from '@/canvas-home/home-layout'
 
-export type WxButtonPressShape = 'pill' | 'round' | 'circle'
+export type WxButtonPressShape = 'primary' | 'pill' | 'round' | 'circle' | 'ghost'
 
 /**
  * 在按钮上方绘制按压高亮（不 rebake Canvas）。
@@ -23,6 +23,11 @@ export function drawWxButtonPressHighlight(
     return
   }
 
-  const radius = shape === 'pill' ? rect.h / 2 : Math.min(20, rect.h / 2)
+  const radius =
+    shape === 'pill'
+      ? rect.h / 2
+      : shape === 'primary' || shape === 'ghost'
+        ? Math.min(12, rect.h / 2)
+        : Math.min(20, rect.h / 2)
   g.roundRect(rect.x, rect.y, rect.w, rect.h, radius).fill({ color: 0xffffff, alpha: 0.16 })
 }

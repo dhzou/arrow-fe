@@ -27,6 +27,12 @@ if (import.meta.env.DEV) {
     component: () => import('@/views/LevelEditorView.vue'),
     meta: { transition: 'route-slide' },
   })
+  routes.push({
+    path: '/dev/ui',
+    name: 'dev-ui',
+    component: () => import('@/views/DevUiPreviewView.vue'),
+    meta: { transition: 'route-slide' },
+  })
 }
 const router = createRouter({
   history: createWebHistory(),

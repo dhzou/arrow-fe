@@ -15,6 +15,7 @@ import {
 } from '@/wx/wx-canvas-bake'
 import { getWxSharedOffscreenCanvas, getWxCanvas2dContext } from '@/wx/canvas'
 import { wxHomeAnimFrame } from '@/wx/wx-home-anim'
+import { WX_THEME_INDEX } from '@/wx/wx-theme'
 
 /** 微信新手引导 — Canvas 绘制 + Image 烘焙 */
 export class WxTutorialCanvasLayer extends Sprite {
@@ -64,6 +65,10 @@ export class WxTutorialCanvasLayer extends Sprite {
     invalidateWxCanvasBake(this, this.bakeState)
   }
 
+  requestTextureRefresh(): void {
+    this.cacheKey = ''
+  }
+
   private scheduleBake(
     screenW: number,
     screenH: number,
@@ -80,7 +85,7 @@ export class WxTutorialCanvasLayer extends Sprite {
     this.width = screenW
     this.height = screenH
 
-    const base = `${screenW}|${screenH}|${safeBottom}|${step}`
+    const base = `${screenW}|${screenH}|${safeBottom}|${step}|t${WX_THEME_INDEX}`
     const key = animated ? `${base}|f${wxHomeAnimFrame(t)}` : base
     if (key !== this.cacheKey) {
       this.cacheKey = key

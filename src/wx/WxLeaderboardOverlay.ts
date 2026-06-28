@@ -1,6 +1,6 @@
 import { Container, Graphics } from 'pixi.js'
 import { inRect, type Rect } from '@/canvas-home/home-layout'
-import { drawGlassPanel } from '@/wx/wx-draw'
+import { drawGlassPanel, drawGlassPanelAccent, drawSurfacePanel } from '@/wx/wx-draw'
 import { GAME_HUD } from '@/game/game-ui-content'
 import { drawWxButtonPressHighlight } from '@/wx/wx-button-press'
 import { WxCanvasText, wxTextStyle } from '@/wx/wx-canvas-text'
@@ -31,9 +31,9 @@ function displayNickName(nickName: string): string {
 }
 
 function medalColor(rank: number): number {
-  if (rank === 1) return 0xffd700
-  if (rank === 2) return 0xc0c0c0
-  if (rank === 3) return 0xcd7f32
+  if (rank === 1) return WX_THEME.warn
+  if (rank === 2) return WX_THEME.textMuted
+  if (rank === 3) return WX_THEME.accent2
   return WX_THEME.textMuted
 }
 
@@ -76,6 +76,12 @@ export class WxLeaderboardOverlay extends Container {
 
   setView(view: WxLeaderboardViewState): void {
     this.view = view
+    void this.redraw()
+  }
+
+  /** 切换棋盘主题 — 刷新文字色与列表行绘制 */
+  syncTheme(): void {
+    this.titleText.setFill(WX_THEME.text)
     void this.redraw()
   }
 
@@ -211,9 +217,7 @@ export class WxLeaderboardOverlay extends Container {
 
     if (data.me) {
       const y = this.screenH - this.safeBottom - BOTTOM_PAD - ROW_H
-      this.bg
-        .roundRect(LIST_PAD_X, y, listW, ROW_H, 14)
-        .fill({ color: 0x1a2838, alpha: 0.95 })
+      drawGlassPanelAccent(this.bg, LIST_PAD_X, y, listW, ROW_H, 14)
       this.bg
         .roundRect(LIST_PAD_X, y, listW, ROW_H, 14)
         .stroke({ width: 1.5, color: WX_THEME.accent, alpha: 0.42 })
@@ -224,8 +228,7 @@ export class WxLeaderboardOverlay extends Container {
   }
 
   private drawRow(x: number, y: number, w: number, entry: LeaderboardEntry): Promise<void>[] {
-    this.bg.roundRect(x, y, w, ROW_H, 12).fill({ color: 0x121c2c, alpha: 0.9 })
-    this.bg.roundRect(x, y, w, ROW_H, 12).stroke({ width: 1, color: 0xffffff, alpha: 0.06 })
+    drawSurfacePanel(this.bg, x, y, w, ROW_H, 12)
     return this.drawRowContent(x, y, w, entry, false)
   }
 

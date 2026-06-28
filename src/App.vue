@@ -30,7 +30,7 @@ onMounted(() => {
   overflow: hidden;
   display: flex;
   justify-content: center;
-  background: #070d16;
+  background: var(--game-bg-soft);
 }
 
 .app-panel {

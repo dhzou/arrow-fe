@@ -22,6 +22,7 @@ import {
   boardThemeFrameCss,
   boardThemeFrameTextCss,
   boardThemeHasChromeSplit,
+  DEFAULT_BOARD_THEME_INDEX,
   normalizeBoardThemeIndex,
 } from '@/game/board-theme'
 import { GameController } from '@/game/GameController'
@@ -56,7 +57,7 @@ const boardZoom = ref(BOARD_ZOOM_DEFAULT)
 const showSettings = ref(false)
 
 const boardTheme = computed(() =>
-  getBoardTheme(normalizeBoardThemeIndex(progress.settings.boardThemeIndex ?? 0)),
+  getBoardTheme(normalizeBoardThemeIndex(progress.settings.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX)),
 )
 const gameSurfaceStyle = computed(() => {
   if (!isPathStyleLevelActive.value) return {}
@@ -276,7 +277,7 @@ async function startSession(levelNumber?: number) {
   loadError.value = ''
   boardZoom.value = BOARD_ZOOM_DEFAULT
   renderer.setZoom(BOARD_ZOOM_DEFAULT)
-  renderer.setBoardThemeIndex(progress.settings.boardThemeIndex ?? 0)
+  renderer.setBoardThemeIndex(progress.settings.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX)
 
   const custom = isCustomPlay.value ? loadPlaytestLevel() : null
   if (custom) {
@@ -409,7 +410,7 @@ onUnmounted(() => {
         :style="{ left: hudPauseLeftCss }"
         @click="togglePause"
       >
-        <GameIcon name="pause" :size="18" color="#dce4f0" />
+        <GameIcon name="pause" :size="18" :color="'var(--game-accent)'" />
       </button>
       <button
         class="hud-btn settings ui-tap"
@@ -666,10 +667,6 @@ onUnmounted(() => {
   border-color: rgba(255, 255, 255, 0.35);
   background: rgba(255, 255, 255, 0.22);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-}
-
-.game--l1-chrome .hud-btn.pause :deep(.game-icon) {
-  filter: brightness(10);
 }
 
 .game--l1-chrome .tools .tool .icon {
@@ -973,38 +970,27 @@ onUnmounted(() => {
   width: 40px;
   height: 40px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid color-mix(in srgb, var(--game-border) 85%, transparent);
   border-radius: 50%;
-  background: linear-gradient(
-    180deg,
-    rgba(22, 34, 52, 0.88) 0%,
-    rgba(10, 18, 32, 0.82) 100%
-  );
-  backdrop-filter: blur(14px);
-  color: #dce4f0;
+  background: var(--game-surface);
+  color: var(--game-text-muted);
   cursor: pointer;
   pointer-events: auto;
-  box-shadow:
-    0 0 18px rgba(77, 238, 234, 0.22),
-    0 4px 14px rgba(0, 0, 0, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  box-shadow: 0 2px 10px rgba(44, 51, 64, 0.08);
   transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
 .hud-btn:active {
   transform: scale(0.94);
-  box-shadow:
-    0 0 12px rgba(77, 238, 234, 0.18),
-    0 2px 10px rgba(0, 0, 0, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  box-shadow: 0 1px 6px rgba(44, 51, 64, 0.06);
 }
 
 .hud-btn.settings {
-  border-color: color-mix(in srgb, var(--game-accent) 30%, transparent);
+  border-color: color-mix(in srgb, var(--game-accent) 35%, transparent);
 }
 
 .hud-btn.pause {
-  border-color: rgba(77, 238, 234, 0.35);
+  border-color: color-mix(in srgb, var(--game-accent) 25%, transparent);
 }
 
 .hud-btn.theme {
@@ -1064,10 +1050,10 @@ onUnmounted(() => {
   min-width: 48px;
   height: 24px;
   padding: 0 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid color-mix(in srgb, var(--game-border) 80%, transparent);
   border-radius: 12px;
-  background: rgba(10, 18, 32, 0.55);
-  color: #c8d4e8;
+  background: var(--game-surface);
+  color: var(--game-text);
   font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -1093,7 +1079,7 @@ onUnmounted(() => {
   font-size: 15px;
   font-weight: 500;
   line-height: 1.2;
-  color: #b8c4dc;
+  color: var(--game-text-muted);
   letter-spacing: 0.02em;
 }
 
@@ -1155,11 +1141,9 @@ onUnmounted(() => {
   padding: 0 4px;
   min-height: 44px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  background: #0a0e14;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    0 2px 10px rgba(0, 0, 0, 0.28);
+  border: 1px solid color-mix(in srgb, var(--game-border) 70%, transparent);
+  background: var(--game-surface);
+  box-shadow: var(--game-shadow);
   cursor: default;
 }
 
@@ -1193,10 +1177,10 @@ onUnmounted(() => {
   width: 28px;
   height: 28px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid color-mix(in srgb, var(--game-border) 60%, transparent);
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.04);
-  color: #6b7788;
+  background: color-mix(in srgb, var(--game-glass) 50%, transparent);
+  color: var(--game-text-muted);
   cursor: pointer;
   transition:
     color 0.15s ease,
@@ -1295,17 +1279,14 @@ onUnmounted(() => {
   justify-content: center;
   padding: 8px;
   border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: linear-gradient(180deg, rgba(18, 28, 44, 0.92) 0%, rgba(8, 14, 24, 0.88) 100%);
-  backdrop-filter: blur(16px);
-  color: #fff;
+  border: 1px solid color-mix(in srgb, var(--game-border) 70%, transparent);
+  background: var(--game-surface);
+  color: var(--game-text);
   cursor: pointer;
   font-size: 11px;
   transform: translateZ(0);
   backface-visibility: hidden;
-  box-shadow:
-    0 4px 16px rgba(0, 0, 0, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  box-shadow: var(--game-shadow);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -1341,15 +1322,15 @@ onUnmounted(() => {
   height: 16px;
   padding: 0 4px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #4deeea, #1a8cff);
-  color: #0a1220;
+  background: var(--game-gradient);
+  color: #ffffff;
   font-size: 10px;
   font-weight: 800;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 6px rgba(77, 238, 234, 0.45);
-  border: 1.5px solid rgba(8, 14, 24, 0.9);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--game-accent) 30%, transparent);
+  border: 1.5px solid var(--game-surface-strong);
 }
 
 .tool .badge.warm {
@@ -1392,12 +1373,13 @@ onUnmounted(() => {
   max-width: calc(100% - 32px);
   padding: 10px 14px;
   border-radius: 12px;
-  border: 1px solid rgba(77, 238, 234, 0.35);
-  background: rgba(10, 18, 32, 0.92);
-  color: #dce4f0;
+  border: 1px solid color-mix(in srgb, var(--game-accent) 30%, transparent);
+  background: var(--game-surface-strong);
+  color: var(--game-text);
   font-size: 13px;
   text-align: center;
   pointer-events: none;
+  box-shadow: var(--game-shadow);
 }
 
 .toast-fade-enter-active,

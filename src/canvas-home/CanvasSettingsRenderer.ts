@@ -3,6 +3,7 @@ import {
   drawSettingsVisual,
   type SettingsVisualState,
 } from '@/canvas-home/settings-visual-draw'
+import { DEFAULT_BOARD_THEME_INDEX } from '@/game/board-theme'
 
 export interface CanvasSettingsCallbacks {
   onBack?: () => void
@@ -23,7 +24,7 @@ export class CanvasSettingsRenderer {
     soundEnabled: true,
     currentLevel: 1,
     winStreak: 0,
-    boardThemeIndex: 0,
+    boardThemeIndex: DEFAULT_BOARD_THEME_INDEX,
     showDev: import.meta.env.DEV,
   }
   private backRect: Rect = { x: 0, y: 0, w: 0, h: 0 }

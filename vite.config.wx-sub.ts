@@ -39,8 +39,8 @@ export default defineConfig({
     emptyOutDir: true,
     lib: {
       entry: fileURLToPath(new URL('./src/wx/subpackage-entry.ts', import.meta.url)),
-      formats: ['iife'],
-      name: 'ArrowWxGameCore',
+      // 微信分包须 CommonJS，主包 loadSubpackage 后 require() 才能注册模块
+      formats: ['cjs'],
       fileName: () => 'game.js',
     },
     rollupOptions: {

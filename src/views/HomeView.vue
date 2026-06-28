@@ -1,16 +1,38 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import DailySignInModal from '@/components/DailySignInModal.vue'
 import GameIcon from '@/components/icons/GameIcon.vue'
+import { computeHomeLayout } from '@/canvas-home/home-layout'
 import { MINIGAME_STORE } from '@/game/game-ui-content'
 import { useProgressStore } from '@/stores/progress'
 import { playSound, resumeAudio } from '@/utils/sound'
 
 const router = useRouter()
 const progress = useProgressStore()
+const homeRef = ref<HTMLElement | null>(null)
+const homeBodyRef = ref<HTMLElement | null>(null)
 const showSignIn = ref(false)
 const signInToast = ref('')
+
+function syncHomeScale() {
+  const main = homeRef.value
+  const body = homeBodyRef.value
+  if (!main || !body) return
+  const w = Math.min(main.clientWidth, 480)
+  const h = window.innerHeight
+  const { s } = computeHomeLayout(w, 0, undefined, h, 0)
+  body.style.zoom = s < 0.999 ? String(s) : ''
+}
+
+onMounted(() => {
+  syncHomeScale()
+  window.addEventListener('resize', syncHomeScale, { passive: true })
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', syncHomeScale)
+})
 
 const signInStatus = computed(() => progress.getDailySignInStatus())
 const canClaimDailySignIn = computed(() => signInStatus.value.canClaim)
@@ -47,11 +69,12 @@ async function claimSignIn() {
 </script>
 
 <template>
-  <main class="home">
+  <main ref="homeRef" class="home">
     <div class="stripes" />
     <div class="glow glow-a" />
     <div class="glow glow-b" />
 
+    <div ref="homeBodyRef" class="home-body">
     <header class="hero ui-pop-in">
       <p class="badge">
         <GameIcon name="sparkle" :size="14" class="icon-accent" />
@@ -80,8 +103,8 @@ async function claimSignIn() {
             stroke-linejoin="round"
           />
           <circle cx="68" cy="44" r="3.25" fill="var(--game-snake-head)" />
-          <circle cx="66.65" cy="42.75" r="0.65" fill="var(--game-bg)" />
-          <circle cx="69.35" cy="42.75" r="0.65" fill="var(--game-bg)" />
+          <circle cx="66.65" cy="42.75" r="0.65" fill="var(--game-board)" />
+          <circle cx="69.35" cy="42.75" r="0.65" fill="var(--game-board)" />
         </svg>
       </div>
     </div>
@@ -94,6 +117,10 @@ async function claimSignIn() {
       <p class="level">第 {{ progress.currentLevel }} 关</p>
       <p class="sub">连胜 {{ progress.winStreak }} · 从当前关卡继续</p>
     </div>
+
+    <button class="start ui-tap" type="button" @click="startGame">
+      开始游戏
+    </button>
 
     <div class="quick-row">
       <button class="chip green ui-tap" type="button" @click="openSignIn">
@@ -110,12 +137,7 @@ async function claimSignIn() {
         设置
       </button>
     </div>
-
-    <button class="start ui-tap" type="button" @click="startGame">
-      <span class="start-shine" />
-      <GameIcon name="play" :size="22" class="icon-btn-text" />
-      开始游戏
-    </button>
+    </div>
 
     <DailySignInModal
       v-if="showSignIn"
@@ -132,16 +154,27 @@ async function claimSignIn() {
 <style scoped>
 .home {
   position: relative;
+  width: 100%;
   max-width: 480px;
+  height: 100%;
   margin: 0 auto;
-  min-height: 100vh;
-  padding: 32px 20px 28px;
+  padding: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   background: var(--game-bg);
   color: var(--game-text);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.home-body {
+  width: 100%;
+  padding: 32px 20px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .stripes {
@@ -151,20 +184,20 @@ async function claimSignIn() {
     135deg,
     transparent,
     transparent 16px,
-    rgba(255, 255, 255, 0.018) 16px,
-    rgba(255, 255, 255, 0.018) 32px
+    color-mix(in srgb, var(--game-accent) 4%, transparent) 16px,
+    color-mix(in srgb, var(--game-accent) 4%, transparent) 32px
   );
   pointer-events: none;
 }
 
 .glow {
   position: absolute;
-  width: 220px;
-  height: 220px;
+  width: 200px;
+  height: 200px;
   border-radius: 50%;
-  filter: blur(60px);
+  filter: blur(56px);
   pointer-events: none;
-  opacity: 0.35;
+  opacity: 0.16;
 }
 
 .glow-a {
@@ -196,7 +229,7 @@ async function claimSignIn() {
 .hero {
   position: relative;
   text-align: center;
-  margin-bottom: 22px;
+  margin-bottom: 24px;
 }
 
 .badge {
@@ -218,23 +251,24 @@ async function claimSignIn() {
   font-size: 28px;
   font-weight: 800;
   letter-spacing: 0.02em;
-  text-shadow: 0 0 30px color-mix(in srgb, var(--game-accent) 25%, transparent);
+  color: var(--game-text);
 }
 
 .subtitle {
   margin: 0;
   font-size: 13px;
   color: var(--game-text-muted);
+  line-height: 1.45;
 }
 
 .preview {
   position: relative;
-  width: min(300px, 78vw);
+  width: min(280px, 72vw);
   aspect-ratio: 1;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
   border-radius: 22px;
-  border: 1px solid color-mix(in srgb, var(--game-border) 50%, transparent);
-  background: var(--game-bg-soft);
+  border: 1px solid color-mix(in srgb, var(--game-border) 80%, transparent);
+  background: var(--game-board);
   box-shadow: var(--game-shadow);
 }
 
@@ -281,49 +315,17 @@ async function claimSignIn() {
   width: 100%;
   max-width: 340px;
   margin-bottom: 16px;
-  padding: 16px 18px 14px;
+  padding: 14px 18px 11px;
   text-align: center;
   border-radius: var(--game-radius);
-  border: 1px solid var(--game-border);
+  border: 1px solid color-mix(in srgb, var(--game-border) 70%, transparent);
   background: var(--game-surface);
-  overflow: hidden;
+  box-shadow: var(--game-shadow);
 }
 
-.level-card::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: var(--game-radius);
-  padding: 1px;
-  background: conic-gradient(
-    from var(--card-border-angle, 0deg),
-    transparent 0deg 315deg,
-    color-mix(in srgb, var(--game-accent) 95%, transparent) 318deg,
-    color-mix(in srgb, var(--game-accent-2) 85%, transparent) 319deg,
-    transparent 322deg 360deg
-  );
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  pointer-events: none;
-  animation: ui-card-border-light 3.5s linear infinite;
-}
-
+.level-card::after,
 .level-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(
-    circle at 50% 0%,
-    color-mix(in srgb, var(--game-accent) 12%, transparent),
-    transparent 60%
-  );
-  pointer-events: none;
+  content: none;
 }
 
 .level-icon {
@@ -331,19 +333,20 @@ async function claimSignIn() {
   justify-content: center;
   align-items: center;
   width: 100%;
-  margin-bottom: 6px;
-  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--game-accent) 40%, transparent));
+  margin-bottom: 4px;
 }
 
 .label {
   margin: 0;
   font-size: 12px;
+  line-height: 14px;
   color: var(--game-text-muted);
 }
 
 .level {
-  margin: 4px 0;
+  margin: 4px 0 0;
   font-size: 32px;
+  line-height: 38px;
   font-weight: 800;
   background: var(--game-gradient);
   -webkit-background-clip: text;
@@ -354,13 +357,14 @@ async function claimSignIn() {
 .sub {
   margin: 0;
   font-size: 12px;
+  line-height: 14px;
   color: var(--game-text-dim);
 }
 
 .quick-row {
   display: flex;
-  gap: 8px;
-  margin-bottom: 18px;
+  gap: 10px;
+  margin-bottom: 0;
   flex-wrap: wrap;
   justify-content: center;
 }
@@ -369,26 +373,27 @@ async function claimSignIn() {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 9px 14px;
-  border-radius: var(--game-radius-pill);
+  gap: 5px;
+  padding: 7px 12px;
+  border-radius: 10px;
   font-size: 12px;
-  border: 1px solid transparent;
-  background: var(--game-glass);
-  color: var(--game-text);
+  border: 1px solid color-mix(in srgb, var(--game-border) 65%, transparent);
+  background: color-mix(in srgb, var(--game-glass) 55%, transparent);
+  color: var(--game-text-dim);
   cursor: pointer;
-  backdrop-filter: blur(4px);
 }
 
-.chip.green {
-  border-color: color-mix(in srgb, var(--game-accent-2) 40%, transparent);
-}
-.chip.blue {
-  border-color: color-mix(in srgb, var(--game-accent) 40%, transparent);
-}
+.chip.green,
+.chip.blue,
 .chip.purple {
-  background: color-mix(in srgb, var(--game-accent) 12%, transparent);
-  border-color: color-mix(in srgb, var(--game-accent-2) 40%, transparent);
+  border-color: color-mix(in srgb, var(--game-border) 55%, transparent);
+  background: color-mix(in srgb, var(--game-glass) 30%, transparent);
+}
+
+.chip .icon-accent,
+.chip .icon-accent-2 {
+  color: var(--game-text-muted);
+  opacity: 0.85;
 }
 
 .chip-dot {
@@ -430,36 +435,21 @@ async function claimSignIn() {
 }
 
 .start {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
   width: 100%;
   max-width: 340px;
-  padding: 16px;
+  min-height: 48px;
+  margin-bottom: 14px;
+  padding: 14px 20px;
   border: none;
-  border-radius: var(--game-radius-pill);
-  font-size: 18px;
+  border-radius: 12px;
+  font-size: 17px;
   font-weight: 800;
-  color: var(--game-bg);
+  color: #ffffff;
   cursor: pointer;
   background: var(--game-gradient);
-  box-shadow: var(--game-glow);
-  overflow: hidden;
-  animation: ui-pulse-glow 2.8s ease-in-out infinite;
-}
-
-.start-shine {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    105deg,
-    transparent 35%,
-    rgba(255, 255, 255, 0.35) 50%,
-    transparent 65%
-  );
-  transform: translateX(-120%);
-  animation: ui-shine 3s ease-in-out infinite;
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--game-accent) 22%, transparent);
 }
 </style>
