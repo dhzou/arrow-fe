@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import GameIcon from '@/components/icons/GameIcon.vue'
+import { formatDailyBestTime } from '@/game/daily-challenge'
+import { computed } from 'vue'
 
-defineProps<{
-  levelLabel: string
-  winStreak: number
-  showShareMilestone?: boolean
+const props = defineProps<{
+  rewardGranted?: boolean
+  elapsedMs?: number
 }>()
 
+const elapsedLabel = computed(() => {
+  const ms = props.elapsedMs ?? 0
+  return ms > 0 ? formatDailyBestTime(ms) : ''
+})
+
 const emit = defineEmits<{
-  next: []
+  replay: []
   home: []
-  share: []
 }>()
 </script>
 
@@ -21,34 +26,21 @@ const emit = defineEmits<{
     </div>
     <div class="modal ui-pop-in">
       <p class="tag">
-        <GameIcon name="sparkle" :size="14" :color="'var(--game-accent)'" />
-        通关完成
+        <GameIcon name="calendar" :size="14" :color="'var(--game-accent-2)'" />
+        今日挑战完成
       </p>
-      <h2>{{ levelLabel }}</h2>
+      <h2>今日挑战</h2>
 
       <div class="medal">
         <GameIcon name="trophy" :size="40" color="#ffffff" />
       </div>
-      <div class="stars">
-        <GameIcon v-for="i in 3" :key="i" name="star" :size="22" :color="'var(--game-hint-ring)'" />
-      </div>
 
-      <div class="stats">
-        <span class="stat">
-          <GameIcon name="combo" :size="14" :color="'var(--game-text-muted)'" />
-          连胜 {{ winStreak }}
-        </span>
-      </div>
+      <p v-if="elapsedLabel" class="elapsed">用时 {{ elapsedLabel }}</p>
+
+      <p v-if="rewardGranted" class="reward">首通奖励：+1 提示、+1 辅助</p>
 
       <div class="actions">
-        <button class="btn primary ui-tap" @click="emit('next')">下一关</button>
-        <button
-          v-if="showShareMilestone"
-          class="btn share ui-tap"
-          @click="emit('share')"
-        >
-          分享战绩
-        </button>
+        <button class="btn primary ui-tap" @click="emit('replay')">再玩一次</button>
         <button class="btn ghost ui-tap" @click="emit('home')">回到首页</button>
       </div>
     </div>
@@ -117,7 +109,7 @@ const emit = defineEmits<{
   gap: 6px;
   margin: 0;
   font-size: 13px;
-  color: var(--game-accent);
+  color: var(--game-accent-2);
 }
 
 h2 {
@@ -129,36 +121,27 @@ h2 {
 .medal {
   width: 80px;
   height: 80px;
-  margin: 0 auto 8px;
+  margin: 0 auto 12px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--game-warn), var(--game-icon-assist));
+  background: linear-gradient(135deg, var(--game-accent), var(--game-accent-2));
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--game-warn) 22%, transparent);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--game-accent) 22%, transparent);
   animation: ui-float 2.5s ease-in-out infinite;
 }
 
-.stars {
-  display: flex;
-  justify-content: center;
-  gap: 6px;
-  margin-bottom: 16px;
+.elapsed {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--game-text);
 }
 
-.stats {
-  display: flex;
-  justify-content: center;
-  gap: 20px;
+.reward {
+  margin: 0 0 16px;
   font-size: 13px;
-  color: var(--game-text-muted);
-  margin-bottom: 20px;
-}
-
-.stat {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  color: var(--game-accent);
 }
 
 .actions {
@@ -184,20 +167,6 @@ h2 {
   color: #ffffff;
   font-weight: 700;
   box-shadow: 0 4px 16px color-mix(in srgb, var(--game-accent) 18%, transparent);
-}
-
-.btn.share {
-  border: none;
-  background: var(--game-gradient);
-  color: #ffffff;
-  font-weight: 700;
-  box-shadow: 0 4px 16px color-mix(in srgb, var(--game-accent) 18%, transparent);
-}
-
-.btn.outline {
-  border: 1px solid color-mix(in srgb, var(--game-accent) 45%, transparent);
-  background: transparent;
-  color: var(--game-warn);
 }
 
 .btn.ghost {

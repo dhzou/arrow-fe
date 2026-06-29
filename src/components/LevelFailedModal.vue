@@ -45,6 +45,7 @@ const shareLifeButtonLabel = computed(
       </div>
       <h2>{{ copy.title }}</h2>
       <p>{{ levelLabel }}</p>
+      <p v-if="copy.hint" class="hint">{{ copy.hint }}</p>
       <div class="actions">
         <button
           v-if="showShareLife"
@@ -133,6 +134,13 @@ const shareLifeButtonLabel = computed(
 .modal p {
   margin: 0;
   color: var(--game-text-muted);
+}
+
+.hint {
+  margin-top: 12px !important;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 0 4px;
 }
 
 .actions {

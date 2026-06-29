@@ -85,13 +85,24 @@ export function isFixedBoardSplitOnlyLevel(levelNumber: number): boolean {
   return levelNumber >= 22 && levelNumber <= 31
 }
 
+/** 今日挑战虚拟关卡号（与 daily-challenge-level 共用） */
+export const DAILY_CHALLENGE_LEVEL_NUMBER = 900_001
+
 export function isCompactPathLevel(levelNumber: number): boolean {
   return levelNumber >= 1 && levelNumber <= COMPACT_PATH_MAX_LEVEL
 }
 
-/** L1–31 与 L32+ 变体：小盘路径风视觉（格点渐进、线宽、布局与 L31 一致） */
+export function isDailyChallengeLevelNumber(levelNumber: number): boolean {
+  return levelNumber === DAILY_CHALLENGE_LEVEL_NUMBER
+}
+
+/** L1–31 与 L32+ 变体、今日挑战：小盘路径风视觉 */
 export function usesCompactPathVisual(levelNumber: number): boolean {
-  return isCompactPathLevel(levelNumber) || isInfiniteLevel(levelNumber)
+  return (
+    isCompactPathLevel(levelNumber) ||
+    isInfiniteLevel(levelNumber) ||
+    isDailyChallengeLevelNumber(levelNumber)
+  )
 }
 
 /** @deprecated 使用 usesCompactPathVisual */

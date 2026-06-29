@@ -27,11 +27,17 @@ import { loadWxGameCore } from './wx-game-core-loader'
 import { isWxIosPlatform } from '@/wx/canvas'
 import { hideWxLoadingCover } from './wx-loading-cover'
 import {
+  fetchDailyLeaderboard,
   fetchLeaderboard,
   initWxCloud,
   isWxRankingAvailable,
+  LEADERBOARD_PAGE_SIZE,
+  submitDailyRanking,
   submitRanking,
+  type DailyLeaderboardResult,
+  type LeaderboardResult,
 } from './wx-ranking'
+import type { WxLeaderboardTab } from './WxLeaderboardOverlay'
 import { getWxThemeIndex } from './wx-theme'
 
 type WxScreen = 'home' | 'game' | 'leaderboard'
@@ -45,7 +51,16 @@ export class WxGameApp {
   private readonly settings = new WxSettingsOverlay()
   private readonly leaderboard = new WxLeaderboardOverlay()
   private readonly signIn = new WxSignInOverlay()
-  private hud: WxHudOverlay | null = null
+  private leaderboardTab: WxLeaderboardTab = 'progress'
+  private leaderboardProgressCache: LeaderboardResult | null = null
+  private leaderboardDailyCache: DailyLeaderboardResult | null = null
+  private leaderboardLoadGen = 0
+  private leaderboardLoadingMore = false
+  private leaderboardScrollActive = false
+  private leaderboardScrollMoved = false
+  private leaderboardScrollStartY = 0
+  private leaderboardScrollStartOffset = 0
+  private leaderboardScrollRenderRaf: number | null = null
   private controller: GameController | null = null
   /** 后台预加载对局分包（GameController + HUD） */
   private gameCoreReady: Promise<void> | null = null
@@ -117,6 +132,7 @@ export class WxGameApp {
     })
     this.settings.bindCanvasTextureReady(() => this.renderer.forceRender())
     this.signIn.bindCanvasTextureReady(() => this.renderer.forceRender())
+    this.leaderboard.bindCanvasTextureReady(() => this.renderer.forceRender())
 
     const onPressVisualChange = (): void => {
       this.renderer.forceRender(true)
@@ -127,6 +143,9 @@ export class WxGameApp {
     this.signIn.onPressVisualChange = onPressVisualChange
     this.leaderboard.onPressVisualChange = onPressVisualChange
     this.leaderboard.onContentReady = onPressVisualChange
+    this.leaderboard.onScrollNearEnd = () => {
+      void this.loadMoreLeaderboard()
+    }
 
     await this.finishHomeBoot()
 
@@ -220,6 +239,10 @@ export class WxGameApp {
       onLevelComplete: (_levelNumber, newCurrentLevel) => {
         void submitRanking(newCurrentLevel)
       },
+      onDailyChallengeComplete: (result) => {
+        const date = this.progress.getDailyChallengeStatus().date
+        void submitDailyRanking(date, result.elapsedMs)
+      },
       captureShareImage: () => this.captureBoardShareImage(),
     })
     this.renderer.onCellClick((x, y) => {
@@ -230,6 +253,10 @@ export class WxGameApp {
       }
       void this.ensureController().then((ctrl) => ctrl.handleTap(x, y))
     })
+    this.renderer.onZoomChange = (zoom) => {
+      this.boardZoom = zoom
+      this.hud?.updateZoom(zoom)
+    }
     return this.controller
   }
 
@@ -400,6 +427,7 @@ export class WxGameApp {
       void this.finishHomeReshow(metrics)
       return
     } else if (this.screen === 'leaderboard') {
+      this.leaderboard.recoverAfterBackground()
       this.renderer.forceRender()
     }
 
@@ -434,6 +462,7 @@ export class WxGameApp {
       currentLevel: this.progress.currentLevel,
       winStreak: this.progress.winStreak,
       canClaimDailySignIn: this.progress.getDailySignInStatus().canClaim,
+      dailyChallenge: this.progress.getDailyChallengeStatus(),
     })
     this.renderer.forceRender()
   }
@@ -446,9 +475,9 @@ export class WxGameApp {
     this.renderer.forceRender()
   }
 
-  private syncSettings(): void {
+  private syncSettings(applyGlobalTheme = true): void {
     const boardThemeIndex = this.progress.boardThemeIndex
-    if (boardThemeIndex !== getWxThemeIndex()) {
+    if (applyGlobalTheme && boardThemeIndex !== getWxThemeIndex()) {
       syncThemePack(boardThemeIndex)
     }
     this.settings.update({
@@ -477,10 +506,10 @@ export class WxGameApp {
     }
   }
 
-  private syncHud(): void {
+  private syncHud(skipGlobalTheme = false): void {
     if (this.screen !== 'game') return
     const boardThemeIndex = this.progress.boardThemeIndex
-    if (boardThemeIndex !== getWxThemeIndex()) {
+    if (!skipGlobalTheme && boardThemeIndex !== getWxThemeIndex()) {
       syncThemePack(boardThemeIndex)
     }
     const c = this.controller
@@ -519,6 +548,11 @@ export class WxGameApp {
       shareLifeRemaining: c.shareLifeRemaining(),
       shareHintToast: c.shareHintToast,
       boardThemeIndex: this.progress.boardThemeIndex,
+      showShareMilestone: c.canShareMilestone(),
+      isDailyMode: c.isDailyMode,
+      dailyPlayTimeMs: c.isDailyMode ? c.dailyPlayTimeMs : 0,
+      dailyRewardGranted: c.dailyCompleteResult?.rewardGranted ?? false,
+      dailyElapsedMs: c.dailyCompleteResult?.elapsedMs ?? 0,
     }
     if (!this.hud) return
     if (this.hud.update(state)) {
@@ -606,6 +640,25 @@ export class WxGameApp {
     this.tutorialDecorRaf = null
   }
 
+  private async enterDailyChallenge(): Promise<void> {
+    await resumeAudio()
+    playSound('tap')
+    this.screen = 'game'
+    this.applyScreen()
+    this.boardZoom = BOARD_ZOOM_DEFAULT
+    this.renderer.setBoardThemeIndex(this.progress.boardThemeIndex)
+
+    await this.ensureController()
+    const c = this.controller
+    if (!c) return
+    c.devPlay = false
+    await ensureSnakeLevelsLoaded()
+    await c.startDailySession()
+    this.syncHud()
+    this.hud?.updateZoom(this.boardZoom)
+    this.renderer.setZoom(this.boardZoom)
+  }
+
   private async enterGame(levelNumber?: number): Promise<void> {
     await resumeAudio()
     playSound('tap')
@@ -632,7 +685,7 @@ export class WxGameApp {
     if (c) {
       c.devPlay = false
       c.closePause()
-      c.stopLevelTimer()
+      c.leaveGameScreen()
     }
     this.settingsOpen = false
     this.screen = 'home'
@@ -658,12 +711,23 @@ export class WxGameApp {
     if (this.screen === 'game') {
       this.controller?.resumeAfterSettings()
     }
+    syncThemePack(this.progress.boardThemeIndex)
+    this.hud?.syncTheme()
+    if (this.screen === 'home') {
+      this.home.syncTheme()
+      this.signIn.syncTheme()
+    }
     this.renderer.forceRender()
   }
 
   private openLeaderboard(): void {
     playSound('tap')
     this.screen = 'leaderboard'
+    this.leaderboardTab = 'progress'
+    this.leaderboardProgressCache = null
+    this.leaderboardDailyCache = null
+    this.leaderboard.resetScroll()
+    this.leaderboard.setTab('progress')
     this.applyScreen()
     void this.loadLeaderboard()
   }
@@ -674,14 +738,102 @@ export class WxGameApp {
       return
     }
 
-    this.leaderboard.setView({ phase: 'loading' })
+    const gen = ++this.leaderboardLoadGen
+    this.leaderboard.setTab(this.leaderboardTab)
+
+    const cached =
+      this.leaderboardTab === 'daily' ? this.leaderboardDailyCache : this.leaderboardProgressCache
+
+    if (cached) {
+      if (this.leaderboardTab === 'daily') {
+        this.leaderboard.setView({ phase: 'ready', tab: 'daily', data: cached })
+      } else {
+        this.leaderboard.setView({ phase: 'ready', tab: 'progress', data: cached })
+      }
+    } else {
+      this.leaderboard.setView({ phase: 'loading' })
+    }
 
     try {
-      const data = await fetchLeaderboard(50)
-      this.leaderboard.setView({ phase: 'ready', data })
+      if (this.leaderboardTab === 'daily') {
+        const date = this.progress.getDailyChallengeStatus().date
+        const data = await fetchDailyLeaderboard(date, LEADERBOARD_PAGE_SIZE, 0)
+        if (gen !== this.leaderboardLoadGen) return
+        this.leaderboardDailyCache = data
+        this.leaderboard.setView({ phase: 'ready', tab: 'daily', data })
+      } else {
+        const data = await fetchLeaderboard(LEADERBOARD_PAGE_SIZE, 0)
+        if (gen !== this.leaderboardLoadGen) return
+        this.leaderboardProgressCache = data
+        this.leaderboard.setView({ phase: 'ready', tab: 'progress', data })
+      }
+      if (gen === this.leaderboardLoadGen) {
+        void this.prefetchLeaderboardPeerTab()
+      }
     } catch (err) {
+      if (gen !== this.leaderboardLoadGen) return
       const message = err instanceof Error ? err.message : '加载失败'
       this.leaderboard.setView({ phase: 'error', message })
+    }
+  }
+
+  /** 后台预拉另一 Tab，首次切换时不走 loading */
+  private async prefetchLeaderboardPeerTab(): Promise<void> {
+    if (!isWxRankingAvailable()) return
+    try {
+      if (this.leaderboardTab === 'progress' && !this.leaderboardDailyCache) {
+        const date = this.progress.getDailyChallengeStatus().date
+        this.leaderboardDailyCache = await fetchDailyLeaderboard(date, LEADERBOARD_PAGE_SIZE, 0)
+      } else if (this.leaderboardTab === 'daily' && !this.leaderboardProgressCache) {
+        this.leaderboardProgressCache = await fetchLeaderboard(LEADERBOARD_PAGE_SIZE, 0)
+      }
+    } catch {
+      /* 预取失败不影响当前 Tab */
+    }
+  }
+
+  private async loadMoreLeaderboard(): Promise<void> {
+    if (this.screen !== 'leaderboard' || this.leaderboardLoadingMore) return
+
+    const cached =
+      this.leaderboardTab === 'daily' ? this.leaderboardDailyCache : this.leaderboardProgressCache
+    if (!cached?.hasMore) return
+
+    this.leaderboardLoadingMore = true
+    this.leaderboard.setLoadingMore(true)
+
+    try {
+      const offset = cached.list.length
+      const gen = this.leaderboardLoadGen
+      if (this.leaderboardTab === 'daily') {
+        const date = cached.date || this.progress.getDailyChallengeStatus().date
+        const page = await fetchDailyLeaderboard(date, LEADERBOARD_PAGE_SIZE, offset)
+        if (gen !== this.leaderboardLoadGen) return
+        const merged: DailyLeaderboardResult = {
+          date: page.date || date,
+          list: [...cached.list, ...page.list],
+          me: page.me ?? cached.me,
+          hasMore: page.hasMore,
+        }
+        this.leaderboardDailyCache = merged
+        this.leaderboard.setView({ phase: 'ready', tab: 'daily', data: merged })
+      } else {
+        const page = await fetchLeaderboard(LEADERBOARD_PAGE_SIZE, offset)
+        if (gen !== this.leaderboardLoadGen) return
+        const merged: LeaderboardResult = {
+          list: [...cached.list, ...page.list],
+          me: page.me ?? cached.me,
+          hasMore: page.hasMore,
+        }
+        this.leaderboardProgressCache = merged
+        this.leaderboard.setView({ phase: 'ready', tab: 'progress', data: merged })
+      }
+      this.renderer.forceRender()
+    } catch {
+      /* 加载更多失败时保留已加载内容 */
+    } finally {
+      this.leaderboardLoadingMore = false
+      this.leaderboard.setLoadingMore(false)
     }
   }
 
@@ -809,6 +961,13 @@ export class WxGameApp {
     void resumeAudio()
     this.touchStart = { x, y }
     this.homeChipTapHandled = false
+    this.leaderboardScrollActive = false
+    this.leaderboardScrollMoved = false
+    if (this.screen === 'leaderboard' && this.leaderboard.isPointInListArea(x, y)) {
+      this.leaderboardScrollActive = true
+      this.leaderboardScrollStartY = y
+      this.leaderboardScrollStartOffset = this.leaderboard.getScrollOffset()
+    }
     if (this.screen === 'home' || this.screen === 'leaderboard') {
       if (this.screen === 'home' && isWxIosPlatform()) {
         this.home.ensureHitRects()
@@ -822,7 +981,7 @@ export class WxGameApp {
           }
         } else if (!this.settingsOpen) {
           const homeAction = this.home.hitTest(x, y)
-          if (homeAction === 'signin' || homeAction === 'settings' || homeAction === 'leaderboard') {
+          if (homeAction === 'signin' || homeAction === 'settings' || homeAction === 'leaderboard' || homeAction === 'daily') {
             this.homeChipTapHandled = true
             this.handleHomeAction(homeAction)
             return
@@ -864,6 +1023,16 @@ export class WxGameApp {
   }
 
   private onTouchMove(x: number, y: number): void {
+    if (this.screen === 'leaderboard' && this.leaderboardScrollActive) {
+      const dy = y - this.leaderboardScrollStartY
+      if (Math.abs(dy) > 6) this.leaderboardScrollMoved = true
+      if (this.leaderboardScrollMoved) {
+        this.leaderboard.setScrollOffset(this.leaderboardScrollStartOffset - dy)
+        this.leaderboard.clearPress()
+        this.scheduleLeaderboardScrollRender()
+        return
+      }
+    }
     if (this.screen === 'home' || this.screen === 'leaderboard') {
       this.updateButtonPress(x, y)
       return
@@ -881,6 +1050,13 @@ export class WxGameApp {
   private onTouchEnd(x: number, y: number): void {
     if (this.homeChipTapHandled) {
       this.homeChipTapHandled = false
+      this.touchStart = null
+      this.clearAllButtonPress()
+      return
+    }
+    if (this.leaderboardScrollMoved) {
+      this.leaderboardScrollActive = false
+      this.leaderboardScrollMoved = false
       this.touchStart = null
       this.clearAllButtonPress()
       return
@@ -965,6 +1141,14 @@ export class WxGameApp {
     this.signIn.clearPress()
     this.leaderboard.clearPress()
     this.hud?.clearPress()
+  }
+
+  private scheduleLeaderboardScrollRender(): void {
+    if (this.leaderboardScrollRenderRaf !== null) return
+    this.leaderboardScrollRenderRaf = this.platform.requestAnimationFrame(() => {
+      this.leaderboardScrollRenderRaf = null
+      this.renderer.forceRender(true)
+    })
   }
 
   private applyZoomScrub(x: number, snap: boolean): void {
@@ -1060,6 +1244,8 @@ export class WxGameApp {
   private handleHomeAction(action: WxHomeAction): void {
     if (action === 'start') {
       void this.enterGame()
+    } else if (action === 'daily') {
+      void this.enterDailyChallenge()
     } else if (action === 'settings') {
       this.openSettings()
     } else if (action === 'leaderboard') {
@@ -1145,6 +1331,22 @@ export class WxGameApp {
       this.syncHome()
       return
     }
+    if (action === 'tab-progress' && this.leaderboardTab !== 'progress') {
+      playSound('tap')
+      this.leaderboardTab = 'progress'
+      this.leaderboard.resetScroll()
+      this.leaderboard.setTab('progress')
+      void this.loadLeaderboard()
+      return
+    }
+    if (action === 'tab-daily' && this.leaderboardTab !== 'daily') {
+      playSound('tap')
+      this.leaderboardTab = 'daily'
+      this.leaderboard.resetScroll()
+      this.leaderboard.setTab('daily')
+      void this.loadLeaderboard()
+      return
+    }
     if (action === 'retry') {
       void this.loadLeaderboard()
     }
@@ -1175,13 +1377,18 @@ export class WxGameApp {
     playSound('tap')
     this.progress.setBoardThemeIndex(index)
     this.renderer.setBoardThemeIndex(this.progress.boardThemeIndex)
-    this.syncSettings()
-    this.syncHud()
-    this.settings.syncTheme()
-    this.home.syncTheme()
-    this.signIn.syncTheme()
-    this.leaderboard.syncTheme()
-    this.hud?.syncTheme()
+
+    if (this.settingsOpen) {
+      this.settings.update({
+        soundEnabled: this.progress.soundEnabled,
+        boardThemeIndex: this.progress.boardThemeIndex,
+      })
+      this.syncHud(true)
+    } else {
+      this.syncSettings()
+      this.syncHud()
+    }
+
     this.renderer.forceRender()
     if (this.screen === 'game' && this.controller?.session) {
       void this.ensureController().then((c) => c.renderSession())
@@ -1229,6 +1436,10 @@ export class WxGameApp {
       case 'modal-share-life':
         void resumeAudio()
         c.handleShareForLife()
+        break
+      case 'modal-share-milestone':
+        void resumeAudio()
+        c.handleShareMilestone()
         break
       case 'modal-restart':
         c.handleReplay()

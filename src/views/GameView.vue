@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import LevelCompleteModal from '@/components/LevelCompleteModal.vue'
+import DailyCompleteModal from '@/components/DailyCompleteModal.vue'
 import LevelFailedModal from '@/components/LevelFailedModal.vue'
 import PauseModal from '@/components/PauseModal.vue'
 import GameSettingsModal from '@/components/GameSettingsModal.vue'
@@ -28,7 +29,8 @@ import {
 import { GameController } from '@/game/GameController'
 import { PiniaProgressBridge } from '@/game/PiniaProgressBridge'
 import { formatLevelTime } from '@/game-core/level-timer'
-import { isPathStyleLevel } from '@/game-core/snake-difficulty'
+import { formatDailyElapsedClock } from '@/game/daily-challenge'
+import { usesCompactPathVisual } from '@/game-core/snake-difficulty'
 import { SnakeRenderer } from '@/renderer/SnakeRenderer'
 import { useProgressStore } from '@/stores/progress'
 import { playSound, resumeAudio } from '@/utils/sound'
@@ -39,6 +41,8 @@ const route = useRoute()
 const progress = useProgressStore()
 
 const isDevPlay = computed(() => import.meta.env.DEV && route.query.dev === '1')
+
+const isDailyPlay = computed(() => route.query.mode === 'daily')
 
 const isCustomPlay = computed(() => import.meta.env.DEV && route.query.custom === '1')
 
@@ -102,6 +106,22 @@ const session = computed(() => {
 const showComplete = computed(() => {
   void uiTick.value
   return controller.overlay === 'complete'
+})
+const isDailyMode = computed(() => {
+  void uiTick.value
+  return controller.isDailyMode
+})
+const dailyCompleteRewardGranted = computed(() => {
+  void uiTick.value
+  return controller.dailyCompleteResult?.rewardGranted ?? false
+})
+const dailyCompleteElapsedMs = computed(() => {
+  void uiTick.value
+  return controller.dailyCompleteResult?.elapsedMs ?? 0
+})
+const showShareMilestone = computed(() => {
+  void uiTick.value
+  return controller.canShareMilestone()
 })
 const showFailed = computed(() => {
   void uiTick.value
@@ -196,8 +216,14 @@ const shareLifeRemaining = computed(() => {
 })
 const timeDisplay = computed(() => {
   void uiTick.value
+  if (controller.isDailyMode) {
+    return formatDailyElapsedClock(controller.dailyPlayTimeMs)
+  }
   return formatLevelTime(controller.timeRemainingMs)
 })
+const timeAriaLabel = computed(() =>
+  isDailyMode.value ? '已用时间' : '剩余时间',
+)
 const isTimeUrgent = computed(() => {
   void uiTick.value
   return controller.timeRemainingMs <= 30_000
@@ -214,7 +240,7 @@ const levelLabel = computed(() => {
 const levelNumber = computed(
   () => session.value?.level.levelNumber ?? progress.currentLevel,
 )
-const isPathStyleLevelActive = computed(() => isPathStyleLevel(levelNumber.value))
+const isPathStyleLevelActive = computed(() => usesCompactPathVisual(levelNumber.value))
 const hudPauseLeftPx = computed(() =>
   `${hudPauseLeft(isPathStyleLevelActive.value)}px`,
 )
@@ -232,6 +258,7 @@ function openSettings() {
 function closeSettings() {
   showSettings.value = false
   controller.resumeAfterSettings()
+  syncThemePack(normalizeBoardThemeIndex(progress.settings.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX))
 }
 
 function onBoardThemeChange(index: number) {
@@ -244,12 +271,17 @@ function onBoardThemeChange(index: number) {
 watch(
   () => progress.settings.boardThemeIndex,
   (index) => {
-    syncThemePack(index ?? 0)
-    onBoardThemeChange(normalizeBoardThemeIndex(index ?? 0))
+    const normalized = normalizeBoardThemeIndex(index ?? DEFAULT_BOARD_THEME_INDEX)
+    onBoardThemeChange(normalized)
+    if (!showSettings.value) {
+      syncThemePack(normalized)
+    }
   },
 )
 
-const hudLevelText = computed(() => `关卡: ${levelNumber.value}`)
+const hudLevelText = computed(() =>
+  isDailyMode.value ? '今日挑战' : `关卡: ${levelNumber.value}`,
+)
 const hudPauseLeftCss = computed(
   () => `calc(${hudPauseLeftPx.value} + env(safe-area-inset-left, 0px))`,
 )
@@ -288,6 +320,11 @@ async function startSession(levelNumber?: number) {
   boardZoom.value = BOARD_ZOOM_DEFAULT
   renderer.setZoom(BOARD_ZOOM_DEFAULT)
   renderer.setBoardThemeIndex(progress.settings.boardThemeIndex ?? DEFAULT_BOARD_THEME_INDEX)
+
+  if (isDailyPlay.value) {
+    await controller.startDailySession()
+    return
+  }
 
   const custom = isCustomPlay.value ? loadPlaytestLevel() : null
   if (custom) {
@@ -355,6 +392,15 @@ function handleShareForLife() {
   controller.handleShareForLife()
 }
 
+function handleShareMilestone() {
+  void resumeAudio()
+  controller.handleShareMilestone()
+}
+
+function handleDailyReplay() {
+  controller.handleDailyReplay()
+}
+
 function togglePause() {
   if (showComplete.value || showFailed.value || levelLoading.value || showTutorial.value) return
   controller.openPause()
@@ -377,6 +423,7 @@ function handlePauseRestart() {
 function goHome() {
   playSound('tap')
   controller.closePause()
+  controller.leaveGameScreen()
   if (isDevPlay.value) {
     router.push({ name: 'dev-levels' })
     return
@@ -440,7 +487,7 @@ onUnmounted(() => {
           v-if="!isPathStyleLevelActive"
           class="hud-timer"
           :class="{ urgent: isTimeUrgent }"
-          aria-label="剩余时间"
+          :aria-label="timeAriaLabel"
         >
           {{ timeDisplay }}
         </div>
@@ -465,7 +512,7 @@ onUnmounted(() => {
           <span
             class="hud-timer hud-timer--inline"
             :class="{ urgent: isTimeUrgent }"
-            aria-label="剩余时间"
+            :aria-label="timeAriaLabel"
           >
             {{ timeDisplay }}
           </span>
@@ -585,12 +632,21 @@ onUnmounted(() => {
       </button>
     </footer>
 
+    <DailyCompleteModal
+      v-if="showComplete && isDailyMode && session && !levelLoading"
+      :reward-granted="dailyCompleteRewardGranted"
+      :elapsed-ms="dailyCompleteElapsedMs"
+      @replay="handleDailyReplay"
+      @home="goHome"
+    />
+
     <LevelCompleteModal
-      v-if="showComplete && session && !levelLoading"
+      v-if="showComplete && !isDailyMode && session && !levelLoading"
       :level-label="levelLabel"
-      :moves="session.moves"
       :win-streak="progress.winStreak"
+      :show-share-milestone="showShareMilestone"
       @next="handleNext"
+      @share="handleShareMilestone"
       @home="goHome"
     />
 

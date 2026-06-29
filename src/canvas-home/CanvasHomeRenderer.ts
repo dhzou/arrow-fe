@@ -11,18 +11,25 @@ import {
   drawHomeUi,
 } from '@/canvas-home/home-visual-draw'
 import {
+  fillTextAt,
   fillTextCenter,
   hexCss,
 } from '@/canvas-home/canvas2d-draw'
+import { HOME_CSS } from '@/canvas-home/home-css'
+import { dailyChallengeHomeTitle, resolveDailyChallengeStatus, type DailyChallengeStatus } from '@/game/daily-challenge'
+import { todayDateString } from '@/game-core/random'
+import { defaultSaveData } from '@/utils/storage'
 import { WX_THEME } from '@/wx/wx-theme'
 
 export interface CanvasHomeState {
   currentLevel: number
   winStreak: number
+  dailyChallenge: DailyChallengeStatus
 }
 
 export interface CanvasHomeCallbacks {
   onStart?: () => void
+  onDaily?: () => void
   onSettings?: () => void
 }
 
@@ -33,9 +40,14 @@ export class CanvasHomeRenderer {
   private readonly canvas: HTMLCanvasElement
   private readonly ctx: CanvasRenderingContext2D
   private readonly callbacks: CanvasHomeCallbacks
-  private state: CanvasHomeState = { currentLevel: 1, winStreak: 0 }
+  private state: CanvasHomeState = {
+    currentLevel: 1,
+    winStreak: 0,
+    dailyChallenge: resolveDailyChallengeStatus(defaultSaveData().dailyChallenge, todayDateString()),
+  }
   private layout: HomeLayout | null = null
   private settingsRect: Rect = { x: 0, y: 0, w: 0, h: 0 }
+  private dailyRect: Rect = { x: 0, y: 0, w: 0, h: 0 }
   private startRect: Rect = { x: 0, y: 0, w: 0, h: 0 }
   private animT = 0
   private raf = 0
@@ -116,6 +128,10 @@ export class CanvasHomeRenderer {
       this.callbacks.onStart?.()
       return
     }
+    if (inRect(x, y, this.dailyRect)) {
+      this.callbacks.onDaily?.()
+      return
+    }
     if (inRect(x, y, this.settingsRect)) {
       this.callbacks.onSettings?.()
     }
@@ -142,6 +158,7 @@ export class CanvasHomeRenderer {
   private drawUi(ctx: CanvasRenderingContext2D, L: HomeLayout): void {
     const rects = drawHomeUi(ctx, L, this.animT)
     this.startRect = rects.start
+    this.dailyRect = rects.daily
     this.settingsRect = rects.settings
   }
 
@@ -149,54 +166,48 @@ export class CanvasHomeRenderer {
     const { s } = L
 
     fillTextCenter(ctx, MINIGAME_STORE.name, this.logicalW / 2, L.titleY, {
-      fontSize: 28 * s,
+      fontSize: HOME_CSS.h1Size * s,
       fontWeight: '800',
       fill: hexCss(WX_THEME.text),
-      shadow: hexCss(WX_THEME.accent, 0.25),
     })
 
-    fillTextCenter(ctx, MINIGAME_STORE.tagline, this.logicalW / 2, L.subtitleY, {
-      fontSize: 13 * s,
-      fill: hexCss(WX_THEME.textMuted),
+    const ctaMain = this.state.currentLevel > 1 ? '继续闯关' : '开始游戏'
+    fillTextCenter(ctx, ctaMain, L.startTextX, L.start.y + L.start.h * 0.36, {
+      fontSize: HOME_CSS.btnFont * s,
+      fontWeight: '800',
+      fill: hexCss(WX_THEME.btnTextDark),
     })
 
-    fillTextCenter(ctx, '当前进度', L.card.x + L.card.w / 2, L.cardLabelY, {
-      fontSize: 12 * s,
-      fill: hexCss(WX_THEME.textMuted),
+    fillTextCenter(ctx, `第 ${this.state.currentLevel} 关`, L.startTextX, L.startSubY, {
+      fontSize: HOME_CSS.btnSubFont * s,
+      fill: hexCss(WX_THEME.btnTextDark, 0.78),
     })
 
-    fillTextCenter(
+    fillTextAt(ctx, '今日挑战', L.dailyCardLabelX, L.dailyCardLabelY, 'left', {
+      fontSize: HOME_CSS.dailyLabelSize * s,
+      fontWeight: '600',
+      fill: hexCss(WX_THEME.text),
+    })
+
+    fillTextAt(
       ctx,
-      `第 ${this.state.currentLevel} 关`,
-      L.card.x + L.card.w / 2,
-      L.cardLevelY,
+      dailyChallengeHomeTitle(this.state.dailyChallenge),
+      L.dailyCardTitleX - 10 * s,
+      L.dailyCardTitleY,
+      'right',
       {
-        fontSize: 32 * s,
-        fontWeight: '800',
-        gradient: [WX_THEME.accent, WX_THEME.accent2],
+        fontSize: HOME_CSS.dailyStatusSize * s,
+        fontWeight: '600',
+        fill: hexCss(WX_THEME.accent2),
       },
     )
 
-    fillTextCenter(
-      ctx,
-      `连胜 ${this.state.winStreak} · 从当前关卡继续`,
-      L.card.x + L.card.w / 2,
-      L.cardSubY,
-      { fontSize: 12 * s, fill: hexCss(WX_THEME.textDim) },
-    )
-
-    const chipLabels = ['每日签到', '全服排行', '设置']
-    L.chips.forEach((chip, i) => {
-      fillTextCenter(ctx, chipLabels[i], L.chipTextX[i], chip.y + chip.h / 2, {
-        fontSize: 12 * s,
-        fill: hexCss(WX_THEME.text),
+    const chipLabels = ['签到', '排行', '设置']
+    L.chips.forEach((_chip, i) => {
+      fillTextCenter(ctx, chipLabels[i], L.chipTextX[i], L.chipLabelY[i], {
+        fontSize: HOME_CSS.chipFont * s,
+        fill: hexCss(WX_THEME.textMuted),
       })
-    })
-
-    fillTextCenter(ctx, '开始游戏', L.startTextX, L.start.y + L.start.h / 2, {
-      fontSize: 18 * s,
-      fontWeight: '800',
-      fill: hexCss(WX_THEME.btnTextDark),
     })
   }
 }

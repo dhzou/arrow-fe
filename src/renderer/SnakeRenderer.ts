@@ -194,23 +194,18 @@ export class SnakeRenderer {
   private levelEntranceOrder: number[] = []
   private levelEntranceStartMs = 0
   private levelEntranceSnakeMs = 380
-  private levelEntranceStaggerMs = 48
   private levelEntranceTotalMs = 0
-  private levelEntranceLastRenderMs = 0
   private levelEntranceOnComplete: (() => void) | null = null
   /** 进关动画：已完成蛇的静态层，避免每帧 clear+重绘全部 partially drawn 蛇 */
   private levelEntranceDoneGfx: Graphics | null = null
   private levelEntranceProgressCache: number[] = []
-  private levelEntranceBatchIndex = 0
+  private levelEntranceDists: number[] = []
+  private levelEntranceMaxDist = 1
   private gridRevealLastRenderMs = 0
-  /** 微信 Canvas2D 下限制进关/格点重绘频率，减轻每帧全量 clear+stroke */
-  private static readonly ENTRANCE_RENDER_INTERVAL_WX = 48
-  private static readonly ENTRANCE_BATCH_INTERVAL_WX = 42
+  /** 微信 Canvas2D 下限制格点重绘频率，减轻每帧全量 clear+stroke */
   private static readonly GRID_REVEAL_INTERVAL_WX = 48
-  /** 微信：蛇数过多时跳过生长动画，改为分批或直接绘制 */
+  /** 微信：蛇数过多时跳过生长动画，直接绘制 */
   private static readonly ENTRANCE_INSTANT_WX_SNAKES = 100
-  private static readonly ENTRANCE_BATCH_WX_SNAKES = 36
-  private static readonly ENTRANCE_BATCH_SIZE_WX = 8
 
   /** 微信首页预览等 overlay 动效 — 走 Pixi ticker 与屏幕刷新同步 */
   setHomeFrameListener(listener: ((dtMs: number) => void) | null): void {
@@ -888,7 +883,7 @@ export class SnakeRenderer {
     }
   }
 
-  /** 进关：路径从尾到头逐条画出 */
+  /** 进关：路径从棋盘中心向四周逐条显现 */
   animateLevelEntrance(): Promise<void> {
     return new Promise((resolve) => {
       if (!this.app || !this.roadsStatic) {
@@ -920,22 +915,20 @@ export class SnakeRenderer {
         return
       }
 
-      if (isWxMiniGame() && snakes.length >= SnakeRenderer.ENTRANCE_BATCH_WX_SNAKES) {
-        this.startLevelEntranceBatch(resolve, snakes)
-        return
-      }
-
       this.levelEntranceActive = true
       this.levelEntranceSnakes = snakes
       this.levelEntranceOrder = this.sortSnakeEntranceOrder(snakes)
+      const { cx, cy } = this.boardEntranceCenter()
+      this.levelEntranceDists = this.levelEntranceOrder.map((i) =>
+        this.snakeEntranceCenterDist(snakes[i]!, cx, cy),
+      )
+      this.levelEntranceMaxDist = Math.max(...this.levelEntranceDists, 1e-6)
       this.mountEntranceDoneGfx()
       this.levelEntranceProgressCache = new Array(this.levelEntranceOrder.length).fill(0)
       const timing = this.computeEntranceTiming(snakes.length)
       this.levelEntranceSnakeMs = timing.snakeMs
-      this.levelEntranceStaggerMs = timing.staggerMs
       this.levelEntranceTotalMs = timing.totalMs
       this.levelEntranceStartMs = performance.now()
-      this.levelEntranceLastRenderMs = 0
       this.levelEntranceOnComplete = () => resolve()
       this.syncWxGameplayRenderState()
 
@@ -1755,8 +1748,8 @@ export class SnakeRenderer {
     this.levelEntranceSnakes = []
     this.levelEntranceOrder = []
     this.levelEntranceProgressCache = []
-    this.levelEntranceBatchIndex = 0
-    this.levelEntranceLastRenderMs = 0
+    this.levelEntranceDists = []
+    this.levelEntranceMaxDist = 1
     this.levelEntranceOnComplete = null
   }
 
@@ -1775,52 +1768,6 @@ export class SnakeRenderer {
     }
   }
 
-  /** 微信中关：按批绘制完整蛇身，比逐条生长更省 Canvas2D */
-  private startLevelEntranceBatch(resolve: () => void, snakes: SnakePiece[]): void {
-    this.stopLevelEntrance()
-    this.levelEntranceActive = true
-    this.levelEntranceSnakes = snakes
-    this.levelEntranceOrder = this.sortSnakeEntranceOrder(snakes)
-    this.levelEntranceBatchIndex = 0
-    this.levelEntranceOnComplete = () => resolve()
-    this.syncWxGameplayRenderState()
-    this.mountEntranceDoneGfx()
-    this.roadsStatic!.clear()
-    this.headsStatic?.removeChildren()
-    this.tickLevelEntranceBatch()
-  }
-
-  private tickLevelEntranceBatch = (): void => {
-    const now = performance.now()
-    const throttled =
-      isWxMiniGame() &&
-      now - this.levelEntranceLastRenderMs < SnakeRenderer.ENTRANCE_BATCH_INTERVAL_WX
-
-    if (!throttled && this.levelEntranceDoneGfx) {
-      const end = Math.min(
-        this.levelEntranceBatchIndex + SnakeRenderer.ENTRANCE_BATCH_SIZE_WX,
-        this.levelEntranceOrder.length,
-      )
-      for (let i = this.levelEntranceBatchIndex; i < end; i++) {
-        const snake = this.levelEntranceSnakes[this.levelEntranceOrder[i]!]
-        if (!snake || snake.cells.length < 2) continue
-        const style = this.blockedSnakeIds.has(snake.id) ? this.blockedStyle() : this.snakeStyle()
-        this.drawSnakePolyline(this.levelEntranceDoneGfx, snake.cells, style, 1, snake.id)
-      }
-      this.levelEntranceBatchIndex = end
-      this.roadsStatic!.clear()
-      this.headsStatic?.removeChildren()
-      this.commitRender()
-      this.levelEntranceLastRenderMs = now
-    }
-
-    if (this.levelEntranceBatchIndex >= this.levelEntranceOrder.length) {
-      this.finishLevelEntrance()
-      return
-    }
-    this.levelEntranceRaf = this.scheduleFrame(this.tickLevelEntranceBatch)
-  }
-
   private finishLevelEntrance(): void {
     const onComplete = this.levelEntranceOnComplete
     this.stopLevelEntrance()
@@ -1833,15 +1780,8 @@ export class SnakeRenderer {
 
   private tickLevelEntrance = (): void => {
     const now = performance.now()
-    const wxThrottle =
-      isWxMiniGame() &&
-      now - this.levelEntranceLastRenderMs < SnakeRenderer.ENTRANCE_RENDER_INTERVAL_WX
-
-    if (!wxThrottle) {
-      this.drawStaticSnakesEntrance(now)
-      this.commitRender()
-      this.levelEntranceLastRenderMs = now
-    }
+    this.drawStaticSnakesEntrance(now)
+    this.commitRender()
 
     if (now - this.levelEntranceStartMs >= this.levelEntranceTotalMs) {
       this.finishLevelEntrance()
@@ -1856,43 +1796,67 @@ export class SnakeRenderer {
     totalMs: number
   } {
     const wx = isWxMiniGame()
-    const snakeMs = wx ? 240 : 380
-    const staggerMs = wx ? 28 : 48
-    const maxTotalMs = wx ? 1400 : 2800
-    if (snakeCount <= 1) {
-      return { snakeMs, staggerMs: 0, totalMs: snakeMs }
+    const snakeMs = wx ? 280 : 420
+    const waveMs = wx
+      ? Math.min(1500, 720 + snakeCount * 5)
+      : Math.min(2200, 980 + snakeCount * 7)
+    const totalMs = snakeMs + waveMs
+    return { snakeMs, staggerMs: 0, totalMs }
+  }
+
+  private boardEntranceCenter(): { cx: number; cy: number } {
+    if (this.gridWidth > 0 && this.gridHeight > 0) {
+      return { cx: (this.gridWidth - 1) / 2, cy: (this.gridHeight - 1) / 2 }
     }
-    let totalMs = (snakeCount - 1) * staggerMs + snakeMs
-    if (totalMs <= maxTotalMs) {
-      return { snakeMs, staggerMs, totalMs }
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const snake of this.lastSnakes) {
+      for (const c of snake.cells) {
+        minX = Math.min(minX, c.x)
+        minY = Math.min(minY, c.y)
+        maxX = Math.max(maxX, c.x)
+        maxY = Math.max(maxY, c.y)
+      }
     }
-    const adjustedStagger = Math.max(16, Math.floor((maxTotalMs - snakeMs) / (snakeCount - 1)))
-    return {
-      snakeMs,
-      staggerMs: adjustedStagger,
-      totalMs: (snakeCount - 1) * adjustedStagger + snakeMs,
+    if (!Number.isFinite(minX)) return { cx: 0, cy: 0 }
+    return { cx: (minX + maxX) / 2, cy: (minY + maxY) / 2 }
+  }
+
+  private snakeEntranceCenterDist(snake: SnakePiece, cx: number, cy: number): number {
+    let sx = 0
+    let sy = 0
+    for (const c of snake.cells) {
+      sx += c.x
+      sy += c.y
     }
+    const n = snake.cells.length
+    return Math.hypot(sx / n - cx, sy / n - cy)
   }
 
   private sortSnakeEntranceOrder(snakes: SnakePiece[]): number[] {
+    const { cx, cy } = this.boardEntranceCenter()
     return snakes
       .map((_, index) => index)
       .sort((a, b) => {
-        const ta = snakes[a]!.cells[0]!
-        const tb = snakes[b]!.cells[0]!
-        return ta.y - tb.y || ta.x - tb.x || snakes[a]!.id.localeCompare(snakes[b]!.id)
+        const da = this.snakeEntranceCenterDist(snakes[a]!, cx, cy)
+        const db = this.snakeEntranceCenterDist(snakes[b]!, cx, cy)
+        return da - db || snakes[a]!.id.localeCompare(snakes[b]!.id)
       })
   }
 
   private snakeEntranceProgress(orderIndex: number, now: number): number {
     const elapsed = now - this.levelEntranceStartMs
-    const start = orderIndex * this.levelEntranceStaggerMs
-    const t = (elapsed - start) / this.levelEntranceSnakeMs
+    const dist = this.levelEntranceDists[orderIndex] ?? 0
+    const radialSpan = Math.max(1, this.levelEntranceTotalMs - this.levelEntranceSnakeMs)
+    const radialDelay = (dist / this.levelEntranceMaxDist) * radialSpan
+    const t = (elapsed - radialDelay) / this.levelEntranceSnakeMs
     return this.entranceEase(Math.max(0, Math.min(1, t)))
   }
 
   private entranceEase(t: number): number {
-    return 1 - (1 - t) ** 3
+    return this.easeStep(t)
   }
 
   private drawStaticSnakesEntrance(now: number): void {

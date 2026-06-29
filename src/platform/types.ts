@@ -30,6 +30,8 @@ export interface ShareForHintPayload {
   cancelText: string
   /** 奖励类型，微信端用于定向分享与云函数计次 */
   rewardType?: ShareRewardType
+  /** 为 true 时不计入每日 5 次分享上限（如今日挑战续时/加命） */
+  excludeFromDailyLimit?: boolean
   /** 分享前截取棋盘等区域，返回微信临时文件路径 */
   getShareImage?: () => Promise<string | undefined>
 }

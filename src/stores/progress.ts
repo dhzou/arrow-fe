@@ -16,6 +16,12 @@ import {
   type SignInReward,
 } from '@/game/daily-sign-in'
 import {
+  completeDailyChallengeState,
+  resolveDailyChallengeStatus,
+  type DailyChallengeCompleteResult,
+  type DailyChallengeStatus,
+} from '@/game/daily-challenge'
+import {
   canDailyShareForReward,
   getDailyShareRemaining,
   recordDailyShareReward,
@@ -31,7 +37,6 @@ export const useProgressStore = defineStore('progress', {
   getters: {
     soundEnabled: (state) => state.settings.soundEnabled,
     dailyCompleted: (state) => state.dailyChallenge.completed,
-    dailyBestMoves: (state) => state.dailyChallenge.bestMoves,
     dailySignInStatus: (state) => resolveSignInStatus(state.dailySignIn),
     canClaimDailySignIn: (state) => resolveSignInStatus(state.dailySignIn).canClaim,
   },
@@ -100,12 +105,19 @@ export const useProgressStore = defineStore('progress', {
       this.persist()
     },
 
-    completeDaily(moves: number) {
-      this.dailyChallenge.completed = true
-      if (this.dailyChallenge.bestMoves === 0 || moves < this.dailyChallenge.bestMoves) {
-        this.dailyChallenge.bestMoves = moves
+    completeDailyChallenge(elapsedMs: number): DailyChallengeCompleteResult {
+      const { state, result } = completeDailyChallengeState(this.dailyChallenge, elapsedMs)
+      this.dailyChallenge = state
+      if (result.rewardGranted) {
+        this.hintsRemaining += 1
+        this.assistsRemaining += 1
       }
       this.persist()
+      return result
+    },
+
+    getDailyChallengeStatus(): DailyChallengeStatus {
+      return resolveDailyChallengeStatus(this.dailyChallenge)
     },
 
     toggleSound() {

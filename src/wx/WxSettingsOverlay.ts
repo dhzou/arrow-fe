@@ -64,9 +64,9 @@ export class WxSettingsOverlay extends Container {
     this.canvasLayer.invalidateBakedTexture()
   }
 
-  /** 切换棋盘主题 — 保留当前纹理，异步按新 WX_THEME 重烘焙 */
+  /** 切换棋盘主题 — 仅更新色块选中态，保留当前弹窗纹理 */
   syncTheme(): void {
-    this.canvasLayer.requestTextureRefresh()
+    if (!this.state) return
     this.redraw()
   }
 

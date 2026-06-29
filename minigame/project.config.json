@@ -27,7 +27,12 @@
   "simulatorPluginLibVersion": {},
   "packOptions": {
     "ignore": [],
-    "include": []
+    "include": [
+      {
+        "type": "folder",
+        "value": "subpackage"
+      }
+    ]
   },
   "isGameTourist": false,
   "appid": "wx549a3e2c35a53dac",

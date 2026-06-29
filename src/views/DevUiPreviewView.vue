@@ -150,7 +150,6 @@ function noop() {
     <LevelCompleteModal
       v-if="activeModal === 'complete'"
       level-label="第 12 关"
-      :moves="28"
       :win-streak="3"
       @next="noop"
       @home="noop"

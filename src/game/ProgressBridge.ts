@@ -4,6 +4,12 @@ import {
   type SignInReward,
 } from '@/game/daily-sign-in'
 import {
+  completeDailyChallengeState,
+  resolveDailyChallengeStatus,
+  type DailyChallengeCompleteResult,
+  type DailyChallengeStatus,
+} from '@/game/daily-challenge'
+import {
   canDailyShareForReward,
   getDailyShareRemaining,
   recordDailyShareReward,
@@ -94,6 +100,21 @@ export class ProgressBridge implements ProgressPort {
       this.data.dailyShareReward = result.state
       this.persist()
     }
+    return result
+  }
+
+  getDailyChallengeStatus(): DailyChallengeStatus {
+    return resolveDailyChallengeStatus(this.data.dailyChallenge)
+  }
+
+  completeDailyChallenge(elapsedMs: number): DailyChallengeCompleteResult {
+    const { state, result } = completeDailyChallengeState(this.data.dailyChallenge, elapsedMs)
+    this.data.dailyChallenge = state
+    if (result.rewardGranted) {
+      this.data.hintsRemaining += 1
+      this.data.assistsRemaining += 1
+    }
+    this.persist()
     return result
   }
 

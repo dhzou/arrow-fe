@@ -1,6 +1,7 @@
 import { Sprite, Texture } from 'pixi.js'
 import {
   drawCompleteVisual,
+  drawDailyCompleteVisual,
   drawFailedVisual,
   type GameModalHitRects,
 } from '@/canvas-home/game-modal-visual-draw'
@@ -24,8 +25,13 @@ export type GameModalPayload =
   | {
       kind: 'complete'
       levelLabel: string
-      moves: number
       winStreak: number
+      showShareMilestone: boolean
+    }
+  | {
+      kind: 'daily-complete'
+      rewardGranted: boolean
+      elapsedMs: number
     }
   | {
       kind: 'failed'
@@ -38,6 +44,7 @@ export type GameModalPayload =
     }
 
 type CompletePayload = Extract<GameModalPayload, { kind: 'complete' }>
+type DailyCompletePayload = Extract<GameModalPayload, { kind: 'daily-complete' }>
 
 /** 微信通关 / 失败弹窗 — Canvas 绘制中文 + Image 烘焙 */
 export class WxGameModalCanvasLayer extends Sprite {
@@ -72,7 +79,7 @@ export class WxGameModalCanvasLayer extends Sprite {
   refreshCompleteAnimated(
     screenW: number,
     screenH: number,
-    payload: CompletePayload,
+    payload: CompletePayload | DailyCompletePayload,
     animT: number,
   ): GameModalHitRects | null {
     return this.scheduleBake(screenW, screenH, payload, animT, true)
@@ -107,7 +114,11 @@ export class WxGameModalCanvasLayer extends Sprite {
   }
 
   private completeKey(payload: CompletePayload): string {
-    return `${payload.levelLabel}|${payload.moves}|${payload.winStreak}`
+    return `${payload.levelLabel}|${payload.winStreak}|${payload.showShareMilestone ? 1 : 0}`
+  }
+
+  private dailyCompleteKey(payload: DailyCompletePayload): string {
+    return `${payload.rewardGranted ? 1 : 0}|${payload.elapsedMs}`
   }
 
   private failedKey(payload: Extract<GameModalPayload, { kind: 'failed' }>): string {
@@ -135,12 +146,17 @@ export class WxGameModalCanvasLayer extends Sprite {
     const base =
       payload.kind === 'complete'
         ? `${screenW}|${screenH}|complete|${this.completeKey(payload)}|${themeTag}`
-        : `${screenW}|${screenH}|failed|${this.failedKey(payload)}|${themeTag}`
-    const key = animated && payload.kind === 'complete' ? `${base}|f${wxHomeAnimFrame(animT)}` : base
+        : payload.kind === 'daily-complete'
+          ? `${screenW}|${screenH}|daily-complete|${this.dailyCompleteKey(payload)}|${themeTag}`
+          : `${screenW}|${screenH}|failed|${this.failedKey(payload)}|${themeTag}`
+    const key =
+      animated && (payload.kind === 'complete' || payload.kind === 'daily-complete')
+        ? `${base}|f${wxHomeAnimFrame(animT)}`
+        : base
 
     if (key !== this.cacheKey) {
       this.cacheKey = key
-      if (animated && payload.kind === 'complete' && isWxMiniGame()) {
+      if (animated && (payload.kind === 'complete' || payload.kind === 'daily-complete') && isWxMiniGame()) {
         return this.bakeCompleteAnimatedSync(screenW, screenH, payload, animT)
       }
       if (this.texture !== Texture.EMPTY) {
@@ -159,7 +175,7 @@ export class WxGameModalCanvasLayer extends Sprite {
   private bakeCompleteAnimatedSync(
     screenW: number,
     screenH: number,
-    payload: CompletePayload,
+    payload: CompletePayload | DailyCompletePayload,
     animT: number,
   ): GameModalHitRects | null {
     const gen = this.bakeGeneration
@@ -179,15 +195,25 @@ export class WxGameModalCanvasLayer extends Sprite {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, screenW, screenH)
 
-      const { hits } = drawCompleteVisual(
-        ctx,
-        screenW,
-        screenH,
-        payload.levelLabel,
-        payload.moves,
-        payload.winStreak,
-        animT,
-      )
+      const { hits } =
+        payload.kind === 'daily-complete'
+          ? drawDailyCompleteVisual(
+              ctx,
+              screenW,
+              screenH,
+              payload.rewardGranted,
+              payload.elapsedMs,
+              animT,
+            )
+          : drawCompleteVisual(
+              ctx,
+              screenW,
+              screenH,
+              payload.levelLabel,
+              payload.winStreak,
+              payload.showShareMilestone,
+              animT,
+            )
       this.lastHits = hits
 
       bakeCanvasToCanvasSprite(this, this.bakeState, canvas, screenW, screenH)
@@ -236,11 +262,20 @@ export class WxGameModalCanvasLayer extends Sprite {
               p.screenW,
               p.screenH,
               p.payload.levelLabel,
-              p.payload.moves,
               p.payload.winStreak,
+              p.payload.showShareMilestone,
               p.animT,
             )
-          : drawFailedVisual(
+          : p.payload.kind === 'daily-complete'
+            ? drawDailyCompleteVisual(
+                ctx,
+                p.screenW,
+                p.screenH,
+                p.payload.rewardGranted,
+                p.payload.elapsedMs,
+                p.animT,
+              )
+            : drawFailedVisual(
               ctx,
               p.screenW,
               p.screenH,

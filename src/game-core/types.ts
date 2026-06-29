@@ -43,7 +43,10 @@ export interface DailyChallengeState {
   date: string
   seed: number
   completed: boolean
+  /** @deprecated 不再使用，保留兼容旧存档 */
   bestMoves: number
+  /** 当日最佳通关用时（毫秒），0 表示未记录 */
+  bestTimeMs: number
 }
 
 export interface GameSettings {

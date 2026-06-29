@@ -10,7 +10,7 @@ export const MINIGAME_STORE = {
   shortIntro:
     '点击箭头按顺序清空棋盘！轻策略益智解谜，无限关卡越玩越难，支持缩放镜头、提示与全服排行。看你能闯到第几关？',
   /** 微信后台「小游戏介绍」详情（可分段粘贴） */
-  fullIntro: `箭头消消乐是一款轻策略益智解谜小游戏。棋盘上布满不同方向的箭头路段，点击后箭头会沿所指方向滑出——若前方被其他箭头挡住，则会消耗生命。找到正确顺序，让所有箭头逐一离开即可通关。
+  fullIntro: `箭头拐一拐是一款轻策略益智解谜小游戏。棋盘上布满不同方向的箭头路段，点击后箭头会沿所指方向滑出——若前方被其他箭头挡住，则会消耗生命。找到正确顺序，让所有箭头逐一离开即可通关。
 
 游戏特色：
 · 无限主线关卡，难度循序渐进
@@ -19,7 +19,7 @@ export const MINIGAME_STORE = {
 · 全服排行，与玩家比拼闯关进度
 
 上手简单，越玩越上头。从外圈能直接滑出的箭头开始，往往更容易找到解法。快来挑战，看你能走多远！`,
-  shareTitle: '箭头消消乐｜按顺序清空箭头棋盘',
+  shareTitle: '箭头拐一拐｜按顺序清空箭头棋盘',
   shareText: '这关箭头迷宫有点难，来比比谁先通关！',
 } as const
 
@@ -192,10 +192,37 @@ export const SHARE_LIFE_DESCRIPTION = '分享给好友可加 1 条生命，每�
 export const FAIL_COPY = {
   lives: {
     title: '生命用尽',
+    hint: '先找外圈能直接滑出的箭头；也可分享加命继续挑战。',
   },
   time: {
     title: '时间到',
+    hint: '分享可续时 1 分钟；双指缩放棋盘看得更清楚。',
   },
+} as const
+
+/** 每 5 关通关页展示「分享战绩」 */
+export function isMilestoneShareLevel(levelNumber: number): boolean {
+  return levelNumber >= 5 && levelNumber % 5 === 0
+}
+
+export function milestoneShareText(levelNumber: number): string {
+  return `我已通关第 ${levelNumber} 关，来箭头拐一拐比比谁先过！`
+}
+
+/** 长时间无操作时的轻提示（每关一次） */
+export const IDLE_HINT_MS = 25_000
+export const IDLE_HINT_TOAST = '试试从外圈能直接滑出的箭头开始'
+
+export const SHARE_MILESTONE = {
+  title: MINIGAME_STORE.shareTitle,
+  text: MINIGAME_STORE.shareText,
+  modalTitle: '分享战绩',
+  modalBody: '把本关成绩分享给好友，邀请一起来挑战。',
+  confirmText: '分享战绩',
+  cancelText: '下次再说',
+  copiedToast: '链接已复制，快去邀请好友吧',
+  grantedToast: '',
+  rewardType: 'hint' as const,
 } as const
 
 /** 新用户默认提示 / 辅助次数（账号级，跨关卡保留） */

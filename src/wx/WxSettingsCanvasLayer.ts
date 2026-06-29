@@ -16,7 +16,6 @@ import {
   type WxCanvasImageBakeCapture,
 } from '@/wx/wx-canvas-bake'
 import { getWxSharedOffscreenCanvas, getWxCanvas2dContext } from '@/wx/canvas'
-import { getWxThemeIndex } from '@/wx/wx-theme'
 
 /** 微信设置弹窗 — Canvas 绘制 + Image 烘焙 */
 export class WxSettingsCanvasLayer extends Sprite {
@@ -53,14 +52,17 @@ export class WxSettingsCanvasLayer extends Sprite {
     const boardThemeIndex = normalizeBoardThemeIndex(state.boardThemeIndex)
     const normalizedState: SettingsModalVisualState = { ...state, boardThemeIndex }
     this.lastParams = { screenW, screenH, state: normalizedState }
-    const key = `${screenW}|${screenH}|${normalizedState.soundEnabled}|${boardThemeIndex}|t${getWxThemeIndex()}`
+    const key = `${screenW}|${screenH}|${normalizedState.soundEnabled}|${boardThemeIndex}`
     if (key !== this.cacheKey) {
+      const keepVisible = this.visible && this.bakeState.texture != null
       this.cacheKey = key
-      if (this.texture !== Texture.EMPTY) {
+      if (!keepVisible && this.texture !== Texture.EMPTY) {
         invalidateWxCanvasBake(this, this.bakeState)
       }
       this.pending = { screenW, screenH, state: normalizedState }
-      this.visible = false
+      if (!keepVisible) {
+        this.visible = false
+      }
       void this.ensureBaked()
     } else {
       this.visible = true

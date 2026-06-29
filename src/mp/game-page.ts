@@ -113,6 +113,7 @@ export function createGamePage() {
 
     goHome() {
       Sound.playSound('tap')
+      controller.leaveGameScreen()
       wx.navigateBack({ fail: () => wx.reLaunch({ url: '/pages/home/index' }) })
     },
 

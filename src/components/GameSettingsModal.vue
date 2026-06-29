@@ -8,7 +8,6 @@ import {
   getBoardTheme,
   normalizeBoardThemeIndex,
 } from '@/game/board-theme'
-import { syncThemePack } from '@/game/apply-ui-theme'
 import { useProgressStore } from '@/stores/progress'
 import { computed } from 'vue'
 import { playSound } from '@/utils/sound'
@@ -28,7 +27,6 @@ function selectBoardTheme(index: number) {
   if (index === boardThemeIndex.value) return
   playSound('tap')
   progress.setBoardThemeIndex(index)
-  syncThemePack(index)
 }
 </script>
 

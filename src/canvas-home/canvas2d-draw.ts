@@ -305,6 +305,45 @@ export function fillTextCenter(
   ctx.restore()
 }
 
+export function fillTextAt(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  align: 'left' | 'center' | 'right',
+  opts: {
+    fontSize: number
+    fontWeight?: string
+    fill?: string
+    gradient?: [number, number]
+    shadow?: string
+  },
+): void {
+  ctx.save()
+  const weight = opts.fontWeight ?? '400'
+  const family = isWxMiniGame() ? wxCanvasFontFamily() : '"PingFang SC", "Helvetica Neue", sans-serif'
+  ctx.font = `${weight} ${opts.fontSize}px ${family}`
+  ctx.textAlign = align
+  ctx.textBaseline = 'middle'
+  if (opts.shadow) {
+    ctx.shadowColor = opts.shadow
+    ctx.shadowBlur = 30
+  }
+  if (opts.gradient) {
+    const m = ctx.measureText(text)
+    const left = align === 'center' ? x - m.width / 2 : align === 'right' ? x - m.width : x
+    const right = left + m.width
+    const grad = ctx.createLinearGradient(left, y, right, y)
+    grad.addColorStop(0, hexCss(opts.gradient[0]))
+    grad.addColorStop(1, hexCss(opts.gradient[1]))
+    ctx.fillStyle = grad
+  } else {
+    ctx.fillStyle = opts.fill ?? '#fff'
+  }
+  ctx.fillText(text, x, y)
+  ctx.restore()
+}
+
 export function drawGameIcon2d(
   ctx: CanvasRenderingContext2D,
   name: WxGameIconName,

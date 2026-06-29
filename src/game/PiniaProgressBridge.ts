@@ -62,6 +62,14 @@ export class PiniaProgressBridge implements ProgressPort {
     return this.store.recordDailyShareReward(type)
   }
 
+  getDailyChallengeStatus() {
+    return this.store.getDailyChallengeStatus()
+  }
+
+  completeDailyChallenge(elapsedMs: number) {
+    return this.store.completeDailyChallenge(elapsedMs)
+  }
+
   cycleBoardTheme(): BoardTheme {
     return this.store.cycleBoardTheme()
   }

@@ -23,13 +23,25 @@ function storageApi() {
   return getPlatform().storage
 }
 
-function defaultDailyChallenge(): DailyChallengeState {
-  const date = todayDateString()
+function defaultDailyChallenge(date = todayDateString()): DailyChallengeState {
   return {
     date,
     seed: dailySeed(date),
     completed: false,
     bestMoves: 0,
+    bestTimeMs: 0,
+  }
+}
+
+function normalizeDailyChallengeState(raw: DailyChallengeState | undefined): DailyChallengeState {
+  const base = raw ?? defaultDailyChallenge()
+  return {
+    date: base.date,
+    seed: base.seed,
+    completed: !!base.completed,
+    bestMoves: typeof base.bestMoves === 'number' ? base.bestMoves : 0,
+    bestTimeMs:
+      typeof base.bestTimeMs === 'number' && base.bestTimeMs >= 0 ? Math.floor(base.bestTimeMs) : 0,
   }
 }
 
@@ -85,12 +97,14 @@ function normalizeSettings(raw: GameSettings | undefined, defaults: GameSettings
   }
 }
 
-function normalizeDailyChallenge(raw: DailyChallengeState | undefined): DailyChallengeState {
-  const today = todayDateString()
+export function normalizeDailyChallenge(
+  raw: DailyChallengeState | undefined,
+  today = todayDateString(),
+): DailyChallengeState {
   if (!raw || raw.date !== today) {
-    return defaultDailyChallenge()
+    return defaultDailyChallenge(today)
   }
-  return raw
+  return normalizeDailyChallengeState(raw)
 }
 
 export function loadSaveData(): SaveData {

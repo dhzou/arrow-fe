@@ -1,5 +1,5 @@
 {
-  "description": "箭头消消乐 - 轻策略益智解谜微信小游戏",
+  "description": "箭头拐一拐 - 轻策略益智解谜微信小游戏",
   "packOptions": { "ignore": [], "include": [] },
   "setting": {
     "es6": true,

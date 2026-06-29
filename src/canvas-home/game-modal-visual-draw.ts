@@ -1,4 +1,5 @@
 import { SHARE_LIFE, SHARE_TIME } from '@/game/game-ui-content'
+import { formatDailyBestTime } from '@/game/daily-challenge'
 import {
   drawUiPrimaryBg,
   drawUiSecondaryBg,
@@ -137,14 +138,23 @@ function drawFailedSecondaryBtn(ctx: CanvasRenderingContext2D, rect: Rect): void
   ctx.fillText('回到首页', rect.x + rect.w / 2, rect.y + rect.h / 2)
 }
 
+function drawCompleteShareBtn(ctx: CanvasRenderingContext2D, rect: Rect): void {
+  fillHGradient(ctx, rect.x, rect.y, rect.w, rect.h, WX_THEME.accent, WX_THEME.accent2, rect.h / 2)
+  ctx.font = modalFont(15, '700')
+  ctx.fillStyle = hexCss(WX_THEME.btnTextDark)
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'center'
+  ctx.fillText('分享战绩', rect.x + rect.w / 2, rect.y + rect.h / 2)
+}
+
 /** 对齐 LevelCompleteModal.vue */
 export function drawCompleteVisual(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
   levelLabel: string,
-  moves: number,
   winStreak: number,
+  showShareMilestone = false,
   animT = 0,
 ): { hits: GameModalHitRects } {
   drawModalBackdrop(ctx, w, h)
@@ -156,6 +166,7 @@ export function drawCompleteVisual(
   const btnW = pw - padX * 2
   const btnH = 48
   const btnGap = 10
+  const btnCount = showShareMilestone ? 3 : 2
   const ph =
     padTop +
     13 +
@@ -168,9 +179,8 @@ export function drawCompleteVisual(
     16 +
     13 +
     20 +
-    btnH +
-    btnGap +
-    btnH +
+    btnH * btnCount +
+    btnGap * (btnCount - 1) +
     24
   const px = (w - pw) / 2
   const py = (h - ph) / 2
@@ -223,36 +233,145 @@ export function drawCompleteVisual(
   }
 
   y += 11 + 16
-  const statGap = 20
-  ctx.font = modalFont(13)
-  const stat0 = `步数 ${moves}`
   const stat1 = `连胜 ${winStreak}`
-  const stat0W = ctx.measureText(stat0).width
+  ctx.font = modalFont(13)
   const stat1W = ctx.measureText(stat1).width
   const iconSize = 14
   const statInnerGap = 4
-  const statsW = iconSize + statInnerGap + stat0W + statGap + iconSize + statInnerGap + stat1W
+  const statsW = iconSize + statInnerGap + stat1W
   let statX = cx - statsW / 2
-  drawGameIcon2d(ctx, 'route', statX + iconSize / 2, y, iconSize, WX_THEME.textMuted)
+  drawGameIcon2d(ctx, 'combo', statX + iconSize / 2, y, iconSize, WX_THEME.textMuted)
   ctx.fillStyle = hexCss(WX_THEME.textMuted)
   ctx.textAlign = 'left'
   ctx.textBaseline = 'middle'
-  ctx.fillText(stat0, statX + iconSize + statInnerGap, y)
-  statX += iconSize + statInnerGap + stat0W + statGap
-  drawGameIcon2d(ctx, 'combo', statX + iconSize / 2, y, iconSize, WX_THEME.textMuted)
   ctx.fillText(stat1, statX + iconSize + statInnerGap, y)
 
   y += 13 + 20
   const btnX = px + padX
+  let primary: Rect
+  let secondary: Rect
+  let tertiary: Rect | undefined
+
+  if (showShareMilestone) {
+    primary = { x: btnX, y, w: btnW, h: btnH }
+    drawCompletePrimaryBtn(ctx, primary)
+    y += btnH + btnGap
+
+    secondary = { x: btnX, y, w: btnW, h: btnH }
+    drawCompleteShareBtn(ctx, secondary)
+    y += btnH + btnGap
+
+    tertiary = { x: btnX, y, w: btnW, h: btnH }
+    drawCompleteGhostBtn(ctx, tertiary)
+  } else {
+    primary = { x: btnX, y, w: btnW, h: btnH }
+    drawCompletePrimaryBtn(ctx, primary)
+    y += btnH + btnGap
+
+    secondary = { x: btnX, y, w: btnW, h: btnH }
+    drawCompleteGhostBtn(ctx, secondary)
+  }
+
+  ctx.restore()
+
+  return { hits: { primary, secondary, tertiary } }
+}
+
+/** 今日挑战通关弹窗 */
+export function drawDailyCompleteVisual(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  rewardGranted: boolean,
+  elapsedMs: number,
+  animT = 0,
+): { hits: GameModalHitRects } {
+  drawModalBackdrop(ctx, w, h)
+  drawConfetti(ctx, w, h, animT)
+
+  const padX = 20
+  const padTop = 24
+  const pw = Math.min(340, w - 48)
+  const btnW = pw - padX * 2
+  const btnH = 48
+  const btnGap = 10
+  const timeLabel = elapsedMs > 0 ? formatDailyBestTime(elapsedMs) : ''
+  const timeH = timeLabel ? 28 : 0
+  const rewardH = rewardGranted ? 36 : 0
+  const ph =
+    padTop + 13 + 6 + 22 + 16 + 80 + 8 + timeH + rewardH + 20 + btnH + btnGap + btnH + 24
+  const px = (w - pw) / 2
+  const py = (h - ph) / 2
+  const cx = w / 2
+  const modalCy = py + ph / 2
+  const popT = Math.min(1, animT / 0.45)
+  const modalScale = completeModalPopScale(popT)
+  const modalAlpha = Math.min(1, popT * 1.15)
+  const medalFloatY = Math.sin(animT * ((Math.PI * 2) / 2.5)) * 6
+
+  ctx.save()
+  ctx.globalAlpha = modalAlpha
+  ctx.translate(cx, modalCy)
+  ctx.scale(modalScale, modalScale)
+  ctx.translate(-cx, -modalCy)
+
+  ctx.fillStyle = hexCss(WX_THEME.surfaceStrong, WX_THEME.surfaceStrongAlpha)
+  roundRectPath(ctx, px, py, pw, ph, 20)
+  ctx.fill()
+  ctx.strokeStyle = hexCss(WX_THEME.border, WX_THEME.borderAlpha * 0.8)
+  ctx.lineWidth = 1
+  roundRectPath(ctx, px, py, pw, ph, 20)
+  ctx.stroke()
+
+  let y = py + padTop + 6
+  drawIconLabelRow(ctx, cx, y, 'calendar', 14, WX_THEME.accent2, '今日挑战完成', hexCss(WX_THEME.accent2), 13)
+
+  y += 6 + 11
+  fillTextCenter(ctx, '今日挑战', cx, y, { fontSize: 22, fontWeight: '700', fill: hexCss(WX_THEME.text) })
+
+  y += 11 + 16 + 40
+  const medalCy = y + medalFloatY
+  const medalGrad = ctx.createLinearGradient(cx - 40, medalCy - 40, cx + 40, medalCy + 40)
+  medalGrad.addColorStop(0, hexCss(WX_THEME.accent))
+  medalGrad.addColorStop(1, hexCss(WX_THEME.accent2))
+  ctx.fillStyle = medalGrad
+  ctx.beginPath()
+  ctx.arc(cx, medalCy, 40, 0, Math.PI * 2)
+  ctx.fill()
+  drawGameIcon2d(ctx, 'trophy', cx, medalCy, 40, WX_THEME.btnTextDark)
+
+  if (timeLabel) {
+    y += 40 + 12
+    fillTextCenter(ctx, `用时 ${timeLabel}`, cx, y, {
+      fontSize: 15,
+      fontWeight: '600',
+      fill: hexCss(WX_THEME.text),
+    })
+  }
+
+  if (rewardGranted) {
+    y += timeLabel ? 28 + 8 : 40 + 16
+    fillTextCenter(ctx, '首通奖励：+1 提示、+1 辅助', cx, y, {
+      fontSize: 13,
+      fill: hexCss(WX_THEME.accent),
+    })
+  }
+
+  y += rewardGranted ? 16 + 13 + 20 : timeLabel ? 28 + 13 + 20 : 40 + 13 + 20
+  const btnX = px + padX
   const primary: Rect = { x: btnX, y, w: btnW, h: btnH }
-  drawCompletePrimaryBtn(ctx, primary)
+  fillHGradient(ctx, primary.x, primary.y, primary.w, primary.h, WX_THEME.accent, WX_THEME.accent2, primary.h / 2)
+  ctx.font = modalFont(15, '700')
+  ctx.fillStyle = hexCss(WX_THEME.btnTextDark)
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'center'
+  ctx.fillText('再玩一次', primary.x + primary.w / 2, primary.y + primary.h / 2)
   y += btnH + btnGap
 
   const secondary: Rect = { x: btnX, y, w: btnW, h: btnH }
   drawCompleteGhostBtn(ctx, secondary)
 
   ctx.restore()
-
   return { hits: { primary, secondary } }
 }
 
@@ -318,7 +437,7 @@ export function drawFailedVisual(
   const btnW = pw - padX * 2
   const btnH = 48
   const btnGap = 10
-  const showHint = reason === 'lives' && hint.trim().length > 0
+  const showHint = hint.trim().length > 0
   let hintBlockH = 0
   let hintLines: string[] = []
   if (showHint) {

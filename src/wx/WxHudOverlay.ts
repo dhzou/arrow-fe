@@ -4,6 +4,7 @@ import type { FailReason, GameOverlay } from '@/game/GameController'
 import { isWxMiniGame, getPlatform } from '@/platform'
 import { GAME_HUD, FAIL_COPY, BOARD_ZOOM_MIN, BOARD_ZOOM_MAX, BOARD_ZOOM_STEP, pathToolColumnHeight, hudPauseLeft, hudPauseIconSize, hudSettingsLeft, hudSettingsIconSize } from '@/game/game-ui-content'
 import { formatLevelTime } from '@/game-core/level-timer'
+import { formatDailyElapsedClock } from '@/game/daily-challenge'
 import {
   boardThemeFrameText,
   boardThemeHasChromeSplit,
@@ -43,6 +44,7 @@ export type WxHudAction =
   | 'modal-home'
   | 'modal-share-time'
   | 'modal-share-life'
+  | 'modal-share-milestone'
   | 'tutorial-next'
   | 'none'
 
@@ -76,6 +78,27 @@ export interface WxHudState {
   shareHintToast: string
   boardThemeIndex: number
   tutorialLevel: boolean
+  showShareMilestone: boolean
+  isDailyMode: boolean
+  dailyPlayTimeMs: number
+  dailyRewardGranted: boolean
+  dailyElapsedMs: number
+}
+
+function hudTimerSec(s: WxHudState): number {
+  if (s.isDailyMode) return Math.floor(s.dailyPlayTimeMs / 1000)
+  return Math.floor(s.timeRemainingMs / 1000)
+}
+
+function hudTimerLabel(s: WxHudState): string {
+  if (s.isDailyMode) {
+    return formatDailyElapsedClock(s.dailyPlayTimeMs)
+  }
+  return formatLevelTime(s.timeRemainingMs)
+}
+
+function hudTimerUrgent(s: WxHudState): boolean {
+  return s.timeRemainingMs <= 30_000
 }
 
 /** sRGB relative luminance — 区分蓝图（浅字）与信纸/原木（深字）chrome */
@@ -258,12 +281,18 @@ export class WxHudOverlay extends Container {
     const hits = this.gameModalCanvasLayer.refreshCompleteAnimated(
       this.screenW,
       this.screenH,
-      {
-        kind: 'complete',
-        levelLabel: s.levelLabel,
-        moves: s.moves,
-        winStreak: s.winStreak,
-      },
+      s.isDailyMode
+        ? {
+            kind: 'daily-complete',
+            rewardGranted: s.dailyRewardGranted,
+            elapsedMs: s.dailyElapsedMs,
+          }
+        : {
+            kind: 'complete',
+            levelLabel: s.levelLabel,
+            winStreak: s.winStreak,
+            showShareMilestone: s.showShareMilestone,
+          },
       t,
     )
     if (hits) {
@@ -329,10 +358,10 @@ export class WxHudOverlay extends Container {
   }
 
   update(state: WxHudState): boolean {
-    const prevSec = this.state ? Math.floor(this.state.timeRemainingMs / 1000) : -1
+    const prevSec = this.state ? hudTimerSec(this.state) : -1
     this.state = state
     this.syncResultModalTexture(state)
-    const nextSec = Math.floor(state.timeRemainingMs / 1000)
+    const nextSec = hudTimerSec(state)
     const timerTick = prevSec !== nextSec
 
     const changed = this.redraw()
@@ -399,12 +428,22 @@ export class WxHudOverlay extends Container {
       return
     }
     if (s.overlay === 'complete') {
-      this.gameModalCanvasLayer.refresh(this.screenW, this.screenH, {
-        kind: 'complete',
-        levelLabel: s.levelLabel,
-        moves: s.moves,
-        winStreak: s.winStreak,
-      })
+      this.gameModalCanvasLayer.refresh(
+        this.screenW,
+        this.screenH,
+        s.isDailyMode
+          ? {
+              kind: 'daily-complete',
+              rewardGranted: s.dailyRewardGranted,
+              elapsedMs: s.dailyElapsedMs,
+            }
+          : {
+              kind: 'complete',
+              levelLabel: s.levelLabel,
+              winStreak: s.winStreak,
+              showShareMilestone: s.showShareMilestone,
+            },
+      )
       return
     }
     if (s.overlay === 'failed') {
@@ -415,7 +454,7 @@ export class WxHudOverlay extends Container {
         reason,
         levelLabel: s.levelLabel,
         title: copy.title,
-        hint: '',
+        hint: copy.hint,
         shareTimeRemaining: s.canShareForTime ? s.shareTimeRemaining : 0,
         shareLifeRemaining: s.canShareForLife ? s.shareLifeRemaining : 0,
       })
@@ -458,8 +497,19 @@ export class WxHudOverlay extends Container {
     if (s.loading) return 'none'
 
     if (s.overlay === 'complete') {
-      if (inRect(x, y, this.modalPrimaryRect)) return 'modal-next'
-      if (inRect(x, y, this.modalSecondaryRect)) return 'modal-home'
+      if (inRect(x, y, this.modalPrimaryRect)) {
+        return s.isDailyMode ? 'modal-replay' : 'modal-next'
+      }
+      if (s.isDailyMode) {
+        if (inRect(x, y, this.modalSecondaryRect)) return 'modal-home'
+        return 'none'
+      }
+      if (s.showShareMilestone) {
+        if (inRect(x, y, this.modalSecondaryRect)) return 'modal-share-milestone'
+        if (inRect(x, y, this.modalTertiaryRect)) return 'modal-home'
+      } else if (inRect(x, y, this.modalSecondaryRect)) {
+        return 'modal-home'
+      }
       return 'none'
     }
 
@@ -570,6 +620,8 @@ export class WxHudOverlay extends Container {
       case 'modal-share-life':
       case 'modal-continue':
         return { rect: this.modalPrimaryRect, shape: 'pill' }
+      case 'modal-share-milestone':
+        return { rect: this.modalSecondaryRect, shape: 'pill' }
       case 'modal-replay':
       case 'modal-restart':
         return { rect: this.modalReplayRect(), shape: 'pill' }
@@ -686,7 +738,7 @@ export class WxHudOverlay extends Container {
       this.timerCanvasText.visible = false
       this.drawTopBar(hudTop, s)
       this.lastTopSig = topSig
-      this.lastTimerSec = Math.floor(s.timeRemainingMs / 1000)
+      this.lastTimerSec = hudTimerSec(s)
     }
 
     if (bottomChanged) {
@@ -757,12 +809,22 @@ export class WxHudOverlay extends Container {
     }
 
     if (s.overlay === 'complete' && !s.loading) {
-      const hits = this.gameModalCanvasLayer.refresh(this.screenW, this.screenH, {
-        kind: 'complete',
-        levelLabel: s.levelLabel,
-        moves: s.moves,
-        winStreak: s.winStreak,
-      })
+      const hits = this.gameModalCanvasLayer.refresh(
+        this.screenW,
+        this.screenH,
+        s.isDailyMode
+          ? {
+              kind: 'daily-complete',
+              rewardGranted: s.dailyRewardGranted,
+              elapsedMs: s.dailyElapsedMs,
+            }
+          : {
+              kind: 'complete',
+              levelLabel: s.levelLabel,
+              winStreak: s.winStreak,
+              showShareMilestone: s.showShareMilestone,
+            },
+      )
       if (hits) {
         this.modalPrimaryRect = hits.primary
         this.modalSecondaryRect = hits.secondary
@@ -776,7 +838,7 @@ export class WxHudOverlay extends Container {
         reason,
         levelLabel: s.levelLabel,
         title: copy.title,
-        hint: '',
+        hint: copy.hint,
         shareTimeRemaining: s.canShareForTime ? s.shareTimeRemaining : 0,
         shareLifeRemaining: s.canShareForLife ? s.shareLifeRemaining : 0,
       })
@@ -808,7 +870,7 @@ export class WxHudOverlay extends Container {
 
   /** 倒计时每秒 tick — 只刷新中部，避免整栏 clear + 全量重烘焙 */
   private refreshTimerCenter(s: WxHudState): boolean {
-    const sec = Math.floor(s.timeRemainingMs / 1000)
+    const sec = hudTimerSec(s)
     if (sec === this.lastTimerSec) return false
     this.lastTimerSec = sec
 
@@ -897,8 +959,8 @@ export class WxHudOverlay extends Container {
     chromeSplit: boolean,
   ): void {
     const levelNumber = s.levelLabel.match(/\d+/)?.[0] ?? '1'
-    const timerLabel = formatLevelTime(s.timeRemainingMs)
-    const urgent = s.timeRemainingMs <= 30_000
+    const timerLabel = hudTimerLabel(s)
+    const urgent = hudTimerUrgent(s)
     const mutedText = chromeSplit ? boardThemeFrameText(theme) : 0x8a96a8
 
     const heartSize = GAME_HUD.pathHeartSize
@@ -918,7 +980,7 @@ export class WxHudOverlay extends Container {
     let y = cy - blockH / 2
 
     this.levelCanvasText.visible = true
-    this.levelCanvasText.text = `关卡: ${levelNumber}`
+    this.levelCanvasText.text = s.isDailyMode ? '今日挑战' : `关卡: ${levelNumber}`
     this.levelCanvasText.setFontSize(levelFont)
     this.levelCanvasText.setFill(mutedText)
     this.levelCanvasText.anchor.set(0.5, 0)
@@ -949,8 +1011,8 @@ export class WxHudOverlay extends Container {
   /** 经典风 — 关卡 / 倒计时 / 生命纵向居中 */
   private drawClassicTopCenter(cx: number, barY: number, barH: number, s: WxHudState): void {
     const levelNumber = s.levelLabel.match(/\d+/)?.[0] ?? '1'
-    const timerLabel = formatLevelTime(s.timeRemainingMs)
-    const urgent = s.timeRemainingMs <= 30_000
+    const timerLabel = hudTimerLabel(s)
+    const urgent = hudTimerUrgent(s)
     const mutedText = 0xb8c4dc
     const levelFont = GAME_HUD.levelFontSize
     const levelTextH = wxCanvasTextBlockHeight(levelFont, 2)
@@ -966,7 +1028,7 @@ export class WxHudOverlay extends Container {
     const topY = barY + (barH - blockH) / 2
 
     this.levelCanvasText.visible = true
-    this.levelCanvasText.text = `关卡: ${levelNumber}`
+    this.levelCanvasText.text = s.isDailyMode ? '今日挑战' : `关卡: ${levelNumber}`
     this.levelCanvasText.setFontSize(levelFont)
     this.levelCanvasText.setFill(mutedText)
     this.levelCanvasText.anchor.set(0.5, 0)
@@ -1004,8 +1066,8 @@ export class WxHudOverlay extends Container {
     theme: BoardTheme,
     chromeSplit: boolean,
   ): void {
-    const timerLabel = formatLevelTime(s.timeRemainingMs)
-    const urgent = s.timeRemainingMs <= 30_000
+    const timerLabel = hudTimerLabel(s)
+    const urgent = hudTimerUrgent(s)
     const mutedText = chromeSplit ? boardThemeFrameText(theme) : 0x8a96a8
     const heartSize = GAME_HUD.pathHeartSize
     const heartGap = GAME_HUD.pathHeartsGap
@@ -1035,8 +1097,8 @@ export class WxHudOverlay extends Container {
 
   /** 经典风 — 仅更新倒计时胶囊 + 文案（tick 时不重绘生命） */
   private updateClassicTimerBlock(s: WxHudState, cx: number, barY: number, barH: number): void {
-    const timerLabel = formatLevelTime(s.timeRemainingMs)
-    const urgent = s.timeRemainingMs <= 30_000
+    const timerLabel = hudTimerLabel(s)
+    const urgent = hudTimerUrgent(s)
     const levelFont = GAME_HUD.levelFontSize
     const levelTextH = wxCanvasTextBlockHeight(levelFont, 2)
     const timerFont = 13

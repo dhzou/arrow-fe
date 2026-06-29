@@ -20,8 +20,5 @@
       "name": "gamecore",
       "root": "subpackage/"
     }
-  ],
-  "parallelPreloadSubpackages": [
-    { "name": "gamecore" }
   ]
 }

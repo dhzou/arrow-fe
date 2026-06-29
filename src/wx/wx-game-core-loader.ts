@@ -7,7 +7,9 @@ export interface WxGameCoreModule {
 }
 
 const SUBPACKAGE_NAME = 'gamecore'
+const SUBPACKAGE_ROOT = 'subpackage/'
 const SUBPACKAGE_SCRIPT = 'subpackage/game.js'
+const LOAD_RETRIES = 3
 
 let loadPromise: Promise<WxGameCoreModule> | null = null
 
@@ -24,27 +26,58 @@ function requireSubpackageScript(): WxGameCoreModule {
   return mod as WxGameCoreModule
 }
 
+function loadSubpackageOnce(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    wx.loadSubpackage({
+      name,
+      success: () => resolve(),
+      fail: (err) => reject(err),
+    })
+  })
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function loadSubpackageWithRetry(): Promise<void> {
+  const names = [SUBPACKAGE_NAME, SUBPACKAGE_ROOT]
+  let lastErr: WechatMinigame.GeneralCallbackResult | null = null
+
+  for (let attempt = 0; attempt < LOAD_RETRIES; attempt++) {
+    for (const name of names) {
+      try {
+        await loadSubpackageOnce(name)
+        return
+      } catch (err) {
+        lastErr = err as WechatMinigame.GeneralCallbackResult
+      }
+    }
+    if (attempt < LOAD_RETRIES - 1) {
+      await sleep(400 * (attempt + 1))
+    }
+  }
+
+  throw new Error(
+    `loadSubpackage(${SUBPACKAGE_NAME}) 失败: ${JSON.stringify(lastErr)}。` +
+      '请确认已执行 npm run build:wx 生成 minigame/subpackage/game.js，' +
+      '并在微信开发者工具中打开 minigame/ 目录；修改 project 配置后请「清缓存 → 全部清除」再编译。',
+  )
+}
+
 /** 加载对局分包（GameController + WxHudOverlay） */
 export function loadWxGameCore(): Promise<WxGameCoreModule> {
   if (loadPromise) return loadPromise
 
-  loadPromise = new Promise<WxGameCoreModule>((resolve, reject) => {
+  loadPromise = (async () => {
     if (typeof wx === 'undefined') {
-      reject(new Error('非微信环境不支持分包加载'))
-      return
+      throw new Error('非微信环境不支持分包加载')
     }
-
-    wx.loadSubpackage({
-      name: SUBPACKAGE_NAME,
-      success: () => {
-        try {
-          resolve(requireSubpackageScript())
-        } catch (err) {
-          reject(err)
-        }
-      },
-      fail: (err) => reject(new Error(`loadSubpackage(${SUBPACKAGE_NAME}) 失败: ${JSON.stringify(err)}`)),
-    })
+    await loadSubpackageWithRetry()
+    return requireSubpackageScript()
+  })().catch((err) => {
+    loadPromise = null
+    throw err
   })
 
   return loadPromise

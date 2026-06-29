@@ -8,9 +8,7 @@ export interface Rect {
   h: number
 }
 
-/** 与 HomeView.vue / Canvas / 微信共用的流式布局 */
 export interface HomeLayout {
-  /** viewport ≤480 时为 1（DOM 不缩放）；更宽时按列宽缩放 */
   s: number
   contentW: number
   badge: Rect
@@ -19,29 +17,34 @@ export interface HomeLayout {
   titleY: number
   subtitleY: number
   preview: Rect
-  card: Rect
-  cardIconX: number
-  cardIconY: number
-  cardLabelY: number
-  cardLevelY: number
-  cardSubY: number
+  dailyCard: Rect
+  dailyCardIconX: number
+  dailyCardIconY: number
+  dailyCardLabelX: number
+  dailyCardLabelY: number
+  dailyCardTitleX: number
+  dailyCardTitleY: number
+  footerPanel: Rect
+  footerDividerY: number
+  start: Rect
+  startTextX: number
+  startSubY: number
+  startMetaX: number
+  startMetaY: number
   chips: Rect[]
   chipIconX: number[]
   chipTextX: number[]
-  start: Rect
+  chipIconY: number[]
+  chipLabelY: number[]
   startIconX: number
-  startTextX: number
 }
 
-/**
- * HomeView 在 viewport ≤480px 时使用固定 CSS 像素，不随屏宽同比缩小。
- */
 export function homeScale(screenW: number): number {
   if (screenW <= HOME_CSS.maxWidth) return 1
   return screenW / HOME_CSS.maxWidth
 }
 
-const CHIP_LABELS = ['每日签到', '全服排行', '设置'] as const
+const CHIP_LABELS = ['签到', '排行', '设置'] as const
 
 function badgeWidth(measure: TextMeasure, s: number): number {
   const fs = HOME_CSS.badgeFont * s
@@ -49,46 +52,46 @@ function badgeWidth(measure: TextMeasure, s: number): number {
   return (HOME_CSS.badgePadX * 2 + HOME_CSS.badgeIcon + HOME_CSS.badgeGap + textW) * s
 }
 
-function layoutChips(
+function layoutDock(
   screenW: number,
-  y: number,
+  footerPanel: Rect,
+  dailyBottom: number,
   s: number,
-  measure: TextMeasure,
-): { chips: Rect[]; chipIconX: number[]; chipTextX: number[] } {
-  const fs = HOME_CSS.chipFont * s
-  const padX = HOME_CSS.chipPadX * s
-  const icon = HOME_CSS.chipIcon * s
-  const innerGap = HOME_CSS.chipInnerGap * s
-  const gap = HOME_CSS.chipGap * s
-  const h =
-    Math.max(
-      HOME_CSS.chipLine,
-      HOME_CSS.chipPadY * 2 + Math.max(HOME_CSS.chipIcon, HOME_CSS.chipFont),
-    ) * s
-
-  const widths = CHIP_LABELS.map(
-    (label) => padX * 2 + icon + innerGap + measure(label, fs),
-  )
-  const totalW = widths.reduce((a, b) => a + b, 0) + gap * (widths.length - 1)
-  let x = (screenW - totalW) / 2
+): {
+  chips: Rect[]
+  chipIconX: number[]
+  chipTextX: number[]
+  chipIconY: number[]
+  chipLabelY: number[]
+} {
+  const dockW = footerPanel.w - HOME_CSS.footerInnerPadX * 2 * s
+  const itemW = dockW / 3
+  const dockTop = dailyBottom + HOME_CSS.footerDividerGap * s + 1
+  const h = HOME_CSS.chipLine * s
+  const x0 = footerPanel.x + HOME_CSS.footerInnerPadX * s
+  const iconY = dockTop + 14 * s + (HOME_CSS.chipIconCircle * s) / 2
+  const labelY = iconY + (HOME_CSS.chipIconCircle * s) / 2 + HOME_CSS.chipInnerGap * s
 
   const chips: Rect[] = []
   const chipIconX: number[] = []
   const chipTextX: number[] = []
+  const chipIconY: number[] = []
+  const chipLabelY: number[] = []
 
-  CHIP_LABELS.forEach((label, i) => {
-    const w = widths[i]
-    chips.push({ x, y, w, h })
-    chipIconX.push(x + padX + icon / 2)
-    const textW = measure(label, fs)
-    chipTextX.push(x + padX + icon + innerGap + textW / 2)
-    x += w + gap
+  CHIP_LABELS.forEach((_, i) => {
+    const x = x0 + itemW * i
+    chips.push({ x, y: dockTop, w: itemW, h })
+    const cx = x + itemW / 2
+    chipIconX.push(cx)
+    chipTextX.push(cx)
+    chipIconY.push(iconY)
+    chipLabelY.push(labelY)
   })
 
-  return { chips, chipIconX, chipTextX }
+  return { chips, chipIconX, chipTextX, chipIconY, chipLabelY }
 }
 
-/** badge → title → subtitle → preview → card → start → chips */
+/** badge → title → preview(stage) → start → daily → dock */
 function computeHomeLayoutAtScale(
   screenW: number,
   safeTop: number,
@@ -109,49 +112,66 @@ function computeHomeLayoutAtScale(
   y += bH + HOME_CSS.badgeMb * s
   const titleY = y + (HOME_CSS.h1Line * s) / 2
   y += HOME_CSS.h1Line * s + HOME_CSS.h1Mb * s
-  const subtitleY = y + (HOME_CSS.subtitleLine * s) / 2
-  y += HOME_CSS.subtitleLine * s + HOME_CSS.heroMb * s
+  const subtitleY = titleY
 
-  const previewSize = Math.min(HOME_CSS.previewMax * s, screenW * HOME_CSS.previewVw)
+  const previewSize = Math.min(
+    HOME_CSS.previewMax * s,
+    screenW * HOME_CSS.previewVw,
+    contentW - HOME_CSS.stagePad * 2 * s,
+  )
   const preview: Rect = {
     x: (screenW - previewSize) / 2,
     y,
     w: previewSize,
     h: previewSize,
   }
-  y += previewSize + HOME_CSS.previewMb * s
-
-  const cardW = Math.min(HOME_CSS.cardMaxW * s, contentW)
-  const cardH =
-    (HOME_CSS.cardPadTop +
-      HOME_CSS.cardIcon +
-      HOME_CSS.cardIconMb +
-      HOME_CSS.labelLine +
-      HOME_CSS.levelMy +
-      HOME_CSS.levelLine +
-      HOME_CSS.subLine +
-      HOME_CSS.cardPadBottom) *
-    s
-  const card: Rect = { x: (screenW - cardW) / 2, y, w: cardW, h: cardH }
-
-  const cardIconX = card.x + cardW / 2
-  const cardIconY = card.y + HOME_CSS.cardPadTop * s + (HOME_CSS.cardIcon * s) / 2
-  let cardInnerY = card.y + HOME_CSS.cardPadTop * s + HOME_CSS.cardIcon * s + HOME_CSS.cardIconMb * s
-  const cardLabelY = cardInnerY + (HOME_CSS.labelLine * s) / 2
-  cardInnerY += HOME_CSS.labelLine * s + HOME_CSS.levelMy * s
-  const cardLevelY = cardInnerY + (HOME_CSS.levelLine * s) / 2
-  cardInnerY += HOME_CSS.levelLine * s
-  const cardSubY = card.y + cardH - HOME_CSS.cardPadBottom * s - (HOME_CSS.subLine * s) / 2
-
-  y += cardH + HOME_CSS.cardMb * s
+  y += previewSize + HOME_CSS.stageMb * s
 
   const startW = Math.min(HOME_CSS.btnMaxW * s, contentW)
   const startH = HOME_CSS.btnLine * s
   const start: Rect = { x: (screenW - startW) / 2, y, w: startW, h: startH }
   const startTextX = start.x + startW / 2
+  const startSubY = start.y + startH * 0.68
   y += startH + HOME_CSS.startMb * s
 
-  const { chips, chipIconX, chipTextX } = layoutChips(screenW, y, s, measure)
+  const startMetaY = startSubY
+  const startMetaX = startTextX
+
+  y += HOME_CSS.footerTopGap * s
+
+  const footerW = Math.min(HOME_CSS.cardMaxW * s, contentW)
+  const dailyH = HOME_CSS.dailyStripH * s
+  const dockH = HOME_CSS.chipLine * s
+  const padTop = HOME_CSS.footerInnerPadTop * s
+  const padBottom = HOME_CSS.footerInnerPadBottom * s
+  const footerH = padTop + dailyH + HOME_CSS.footerDividerGap * s + 1 + dockH + padBottom
+  const footerPanel: Rect = { x: (screenW - footerW) / 2, y, w: footerW, h: footerH }
+
+  const padX = HOME_CSS.dailyStripPadX * s
+  const icon = HOME_CSS.dailyStripIcon * s
+  const gap = HOME_CSS.dailyStripGap * s
+  const dailyCard: Rect = {
+    x: footerPanel.x + padX,
+    y: footerPanel.y + padTop,
+    w: footerW - padX * 2,
+    h: dailyH,
+  }
+  const dailyCardIconX = dailyCard.x + icon / 2
+  const dailyCardIconY = dailyCard.y + dailyH / 2
+  const dailyCardLabelX = dailyCard.x + icon + gap
+  const dailyCardLabelY = dailyCard.y + dailyH / 2
+  const dailyCardTitleX = dailyCard.x + dailyCard.w - 4 * s
+  const dailyCardTitleY = dailyCard.y + dailyH / 2
+  const footerDividerY = dailyCard.y + dailyH + HOME_CSS.footerDividerGap * s
+
+  const { chips, chipIconX, chipTextX, chipIconY, chipLabelY } = layoutDock(
+    screenW,
+    footerPanel,
+    dailyCard.y + dailyH,
+    s,
+  )
+
+  y += footerH + HOME_CSS.dailyStripMb * s
 
   return {
     s,
@@ -162,18 +182,26 @@ function computeHomeLayoutAtScale(
     titleY,
     subtitleY,
     preview,
-    card,
-    cardIconX,
-    cardIconY,
-    cardLabelY,
-    cardLevelY,
-    cardSubY,
+    dailyCard,
+    dailyCardIconX,
+    dailyCardIconY,
+    dailyCardLabelX,
+    dailyCardLabelY,
+    dailyCardTitleX,
+    dailyCardTitleY,
+    footerPanel,
+    footerDividerY,
+    start,
+    startTextX,
+    startSubY,
+    startMetaX,
+    startMetaY,
     chips,
     chipIconX,
     chipTextX,
-    start,
+    chipIconY,
+    chipLabelY,
     startIconX: startTextX,
-    startTextX,
   }
 }
 
@@ -207,7 +235,6 @@ export function inRect(x: number, y: number, rect: Rect): boolean {
   return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h
 }
 
-/** 扩大触摸热区 — iOS 真机手指点击更易命中 */
 export function inflateRect(rect: Rect, pad: number): Rect {
   if (rect.w <= 0 || rect.h <= 0) return rect
   return { x: rect.x - pad, y: rect.y - pad, w: rect.w + pad * 2, h: rect.h + pad * 2 }
@@ -215,12 +242,14 @@ export function inflateRect(rect: Rect, pad: number): Rect {
 
 export function homePrimaryHitRects(layout: HomeLayout): {
   start: Rect
+  daily: Rect
   signIn: Rect
   leaderboard: Rect
   settings: Rect
 } {
   return {
     start: { ...layout.start },
+    daily: { ...layout.dailyCard },
     signIn: { ...layout.chips[0]! },
     leaderboard: { ...layout.chips[1]! },
     settings: { ...layout.chips[2]! },
@@ -229,7 +258,6 @@ export function homePrimaryHitRects(layout: HomeLayout): {
 
 export type HomeChipAction = 'signin' | 'leaderboard' | 'settings' | 'none'
 
-/** 底部 chip 行点击 — y 轴整行容错；重叠区取距 chip 中心最近者（避免右优先误判左侧签到） */
 export function hitHomeChipAction(
   x: number,
   y: number,

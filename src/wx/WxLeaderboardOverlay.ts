@@ -1,69 +1,71 @@
 import { Container, Graphics } from 'pixi.js'
 import { inRect, type Rect } from '@/canvas-home/home-layout'
-import { drawGlassPanel, drawGlassPanelAccent, drawSurfacePanel } from '@/wx/wx-draw'
-import { GAME_HUD } from '@/game/game-ui-content'
+import {
+  clampLeaderboardScroll,
+  computeLeaderboardListMetrics,
+  type LeaderboardListMetrics,
+} from '@/canvas-home/leaderboard-visual-draw'
+import type {
+  DailyLeaderboardResult,
+  LeaderboardResult,
+} from '@/wx/wx-ranking'
 import { drawWxButtonPressHighlight } from '@/wx/wx-button-press'
-import { WxCanvasText, wxTextStyle } from '@/wx/wx-canvas-text'
-import type { LeaderboardEntry, LeaderboardResult } from '@/wx/wx-ranking'
-import { WX_THEME } from '@/wx/wx-theme'
+import { WxLeaderboardCanvasLayer } from '@/wx/WxLeaderboardCanvasLayer'
 
-export type WxLeaderboardAction = 'back' | 'retry' | 'none'
+export type WxLeaderboardTab = 'progress' | 'daily'
+
+export type WxLeaderboardAction =
+  | 'back'
+  | 'retry'
+  | 'tab-progress'
+  | 'tab-daily'
+  | 'none'
 
 export type WxLeaderboardViewState =
   | { phase: 'loading' }
   | { phase: 'error'; message: string }
-  | { phase: 'ready'; data: LeaderboardResult }
+  | { phase: 'ready'; tab: 'progress'; data: LeaderboardResult }
+  | { phase: 'ready'; tab: 'daily'; data: DailyLeaderboardResult }
   | { phase: 'offline' }
 
-const ROW_H = 56
-const ROW_GAP = 10
-const PAGE_PAD = 16
-const BACK_SIZE = GAME_HUD.pauseSize
-const HEADER_LIST_GAP = 20
-const LIST_PAD_X = 16
-const BOTTOM_PAD = 16
-const ME_BAR_GAP = 12
-const MAX_ROWS = 12
-
-function displayNickName(nickName: string): string {
-  if (!nickName || nickName.includes('undefined')) return '玩家'
-  return nickName
-}
-
-function medalColor(rank: number): number {
-  if (rank === 1) return WX_THEME.warn
-  if (rank === 2) return WX_THEME.textMuted
-  if (rank === 3) return WX_THEME.accent2
-  return WX_THEME.textMuted
-}
-
-/** 微信全服排行页 */
+/** 微信全服排行页（进度榜 + 今日挑战） */
 export class WxLeaderboardOverlay extends Container {
-  private readonly bg = new Graphics()
+  private readonly canvasLayer = new WxLeaderboardCanvasLayer()
   private readonly pressGfx = new Graphics()
-  private readonly textLayer = new Container()
-  private readonly titleText = new WxCanvasText('全服排行', wxTextStyle(WX_THEME.text, 20, '700'))
 
   private backRect: Rect = { x: 0, y: 0, w: 0, h: 0 }
   private retryRect: Rect = { x: 0, y: 0, w: 0, h: 0 }
+  private tabProgressRect: Rect = { x: 0, y: 0, w: 0, h: 0 }
+  private tabDailyRect: Rect = { x: 0, y: 0, w: 0, h: 0 }
+  private listAreaRect: Rect = { x: 0, y: 0, w: 0, h: 0 }
   private view: WxLeaderboardViewState = { phase: 'loading' }
+  private activeTab: WxLeaderboardTab = 'progress'
   private screenW = 375
   private screenH = 667
   private safeTop = 0
   private safeBottom = 0
+  private scrollOffset = 0
+  private loadingMore = false
+  private scrollNearEndFired = false
   private pressedAction: WxLeaderboardAction | null = null
+  private cachedListMetrics: LeaderboardListMetrics | null = null
+  private cachedListMetricsKey = ''
+  private lastListScrollY = Number.NaN
   onPressVisualChange: (() => void) | null = null
-  /** 文字烘焙完成后触发重绘（解决进入页面空白、按住返回才显示的问题） */
   onContentReady: (() => void) | null = null
-  private readonly rowTexts: WxCanvasText[] = []
-  private redrawGen = 0
+  onScrollNearEnd: (() => void) | null = null
 
   constructor() {
     super()
-    this.addChild(this.bg)
-    this.addChild(this.textLayer)
+    this.addChild(this.canvasLayer)
     this.addChild(this.pressGfx)
-    this.textLayer.addChild(this.titleText)
+  }
+
+  bindCanvasTextureReady(onReady: () => void): void {
+    this.canvasLayer.onTextureReady = () => {
+      this.syncHitsFromLayer()
+      onReady()
+    }
   }
 
   layout(width: number, height: number, safeTop: number, safeBottom = 0): void {
@@ -71,22 +73,126 @@ export class WxLeaderboardOverlay extends Container {
     this.screenH = height
     this.safeTop = safeTop
     this.safeBottom = safeBottom
-    void this.redraw()
+    this.cachedListMetrics = null
+    this.cachedListMetricsKey = ''
+    this.redraw()
+  }
+
+  setTab(tab: WxLeaderboardTab): void {
+    this.activeTab = tab
+  }
+
+  getTab(): WxLeaderboardTab {
+    return this.activeTab
+  }
+
+  resetScroll(): void {
+    this.scrollOffset = 0
+    this.scrollNearEndFired = false
+    this.lastListScrollY = Number.NaN
+  }
+
+  setLoadingMore(loading: boolean): void {
+    if (this.loadingMore === loading) return
+    this.loadingMore = loading
+    if (!loading) {
+      this.scrollNearEndFired = false
+    }
+  }
+
+  setScrollOffset(offset: number): void {
+    const metrics = this.getListMetrics()
+    const next = metrics ? clampLeaderboardScroll(offset, metrics.maxScroll) : Math.max(0, offset)
+    if (Math.abs(next - this.scrollOffset) < 0.5) return
+    this.scrollOffset = next
+    if (metrics) {
+      const y = Math.round(metrics.listTop - next)
+      if (y !== this.lastListScrollY) {
+        this.lastListScrollY = y
+        this.canvasLayer.setListScroll(next, metrics.listTop, metrics.listBottom - metrics.listTop)
+      }
+    }
+    if (!metrics || metrics.maxScroll <= 0 || this.loadingMore) return
+    const nearEnd = next >= metrics.maxScroll - 1
+    if (nearEnd && !this.scrollNearEndFired) {
+      this.scrollNearEndFired = true
+      this.onScrollNearEnd?.()
+    } else if (!nearEnd) {
+      this.scrollNearEndFired = false
+    }
+  }
+
+  scrollBy(deltaY: number): void {
+    this.setScrollOffset(this.scrollOffset - deltaY)
+  }
+
+  getScrollOffset(): number {
+    return this.scrollOffset
+  }
+
+  getListMetrics(): LeaderboardListMetrics | null {
+    if (this.view.phase !== 'ready') return null
+    const listLength = this.view.data.list.length
+    const hasMe = Boolean(this.view.data.me)
+    const key = `${this.screenW}|${this.screenH}|${this.safeTop}|${this.safeBottom}|${listLength}|${hasMe ? 1 : 0}|${this.view.tab}|hm${this.view.data.hasMore ? 1 : 0}`
+    if (key === this.cachedListMetricsKey && this.cachedListMetrics) {
+      return this.cachedListMetrics
+    }
+    const metrics = computeLeaderboardListMetrics(
+      this.screenW,
+      this.screenH,
+      this.safeTop,
+      this.safeBottom,
+      this.view,
+      listLength,
+      hasMe,
+    )
+    this.cachedListMetricsKey = key
+    this.cachedListMetrics = metrics
+    return metrics
+  }
+
+  isPointInListArea(x: number, y: number): boolean {
+    return this.listAreaRect.w > 0 && inRect(x, y, this.listAreaRect)
   }
 
   setView(view: WxLeaderboardViewState): void {
     this.view = view
-    void this.redraw()
+    this.cachedListMetrics = null
+    this.cachedListMetricsKey = ''
+    this.lastListScrollY = Number.NaN
+    if (view.phase === 'ready') {
+      this.activeTab = view.tab
+      const metrics = computeLeaderboardListMetrics(
+        this.screenW,
+        this.screenH,
+        this.safeTop,
+        this.safeBottom,
+        view,
+        view.data.list.length,
+        Boolean(view.data.me),
+      )
+      this.cachedListMetricsKey = `${this.screenW}|${this.screenH}|${this.safeTop}|${this.safeBottom}|${view.data.list.length}|${view.data.me ? 1 : 0}|${view.tab}|hm${view.data.hasMore ? 1 : 0}`
+      this.cachedListMetrics = metrics
+      this.scrollOffset = clampLeaderboardScroll(this.scrollOffset, metrics.maxScroll)
+    }
+    this.redraw()
   }
 
-  /** 切换棋盘主题 — 刷新文字色与列表行绘制 */
   syncTheme(): void {
-    this.titleText.setFill(WX_THEME.text)
-    void this.redraw()
+    this.canvasLayer.requestTextureRefresh()
+    this.redraw()
+  }
+
+  recoverAfterBackground(): void {
+    this.canvasLayer.invalidateBakedTexture()
+    this.redraw()
   }
 
   hitTest(x: number, y: number): WxLeaderboardAction {
     if (inRect(x, y, this.backRect)) return 'back'
+    if (this.view.phase !== 'offline' && inRect(x, y, this.tabProgressRect)) return 'tab-progress'
+    if (this.view.phase !== 'offline' && inRect(x, y, this.tabDailyRect)) return 'tab-daily'
     if (this.view.phase === 'error' && inRect(x, y, this.retryRect)) return 'retry'
     return 'none'
   }
@@ -103,6 +209,17 @@ export class WxLeaderboardOverlay extends Container {
     this.setPressedAction(null)
   }
 
+  private syncHitsFromLayer(): void {
+    const hits = this.canvasLayer.getHits()
+    if (!hits) return
+    this.backRect = hits.back
+    this.tabProgressRect = hits.tabProgress
+    this.tabDailyRect = hits.tabDaily
+    this.retryRect = hits.retry
+    this.listAreaRect = hits.listArea
+    this.onContentReady?.()
+  }
+
   private refreshPressOverlay(): void {
     this.pressGfx.clear()
     if (!this.pressedAction) return
@@ -110,179 +227,33 @@ export class WxLeaderboardOverlay extends Container {
       drawWxButtonPressHighlight(this.pressGfx, this.backRect, 'circle')
       return
     }
+    if (this.pressedAction === 'tab-progress' && this.tabProgressRect.w > 0) {
+      drawWxButtonPressHighlight(this.pressGfx, this.tabProgressRect, 'pill')
+      return
+    }
+    if (this.pressedAction === 'tab-daily' && this.tabDailyRect.w > 0) {
+      drawWxButtonPressHighlight(this.pressGfx, this.tabDailyRect, 'pill')
+      return
+    }
     if (this.pressedAction === 'retry' && this.retryRect.w > 0) {
       drawWxButtonPressHighlight(this.pressGfx, this.retryRect, 'pill')
     }
   }
 
-  private async redraw(): Promise<void> {
-    const gen = ++this.redrawGen
-    this.bg.clear()
-    this.clearRowTexts()
-    this.retryRect = { x: 0, y: 0, w: 0, h: 0 }
-
-    this.bg.rect(0, 0, this.screenW, this.screenH).fill({ color: WX_THEME.bg })
-
-    const headerTop = this.safeTop + PAGE_PAD
-    this.backRect = { x: PAGE_PAD, y: headerTop, w: BACK_SIZE, h: BACK_SIZE }
-    this.drawBackArrow(this.backRect.x + BACK_SIZE / 2, this.backRect.y + BACK_SIZE / 2)
-
-    this.titleText.x = this.screenW / 2
-    this.titleText.y = headerTop + BACK_SIZE / 2
-    this.titleText.anchor.set(0.5)
-
-    const pending: Promise<void>[] = [this.titleText.ensureBaked()]
-
-    switch (this.view.phase) {
-      case 'loading':
-        pending.push(...this.drawCenterMessage('加载排行中…'))
-        break
-      case 'offline':
-        pending.push(...this.drawCenterMessage('请配置云开发环境 ID\n见 cloudfunctions/README.md'))
-        break
-      case 'error':
-        pending.push(...this.drawCenterMessage(this.view.message))
-        pending.push(...this.drawRetryButton())
-        break
-      case 'ready':
-        pending.push(...this.drawList(this.view.data))
-        break
-    }
-
-    await Promise.all(pending)
-    if (gen !== this.redrawGen) return
-    this.onContentReady?.()
-  }
-
-  private drawBackArrow(cx: number, cy: number): void {
-    const s = 0.9
-    this.bg
-      .moveTo(cx + 5 * s, cy - 6 * s)
-      .lineTo(cx - 6 * s, cy)
-      .lineTo(cx + 5 * s, cy + 6 * s)
-      .stroke({ width: 2.2, color: WX_THEME.text, cap: 'round', join: 'round' })
-  }
-
-  private listTopY(): number {
-    return this.safeTop + PAGE_PAD + BACK_SIZE + HEADER_LIST_GAP
-  }
-
-  private drawCenterMessage(msg: string): Promise<void>[] {
-    const lines = msg.split('\n')
-    const startY = this.screenH * 0.42 - ((lines.length - 1) * 10)
-    const pending: Promise<void>[] = []
-    lines.forEach((line, i) => {
-      const t = new WxCanvasText(line, wxTextStyle(WX_THEME.textDim, 14))
-      t.anchor.set(0.5)
-      t.x = this.screenW / 2
-      t.y = startY + i * 22
-      this.textLayer.addChild(t)
-      this.rowTexts.push(t)
-      pending.push(t.ensureBaked())
+  private redraw(): void {
+    this.canvasLayer.refresh(this.screenW, this.screenH, {
+      view: this.view,
+      activeTab: this.activeTab,
+      safeTop: this.safeTop,
+      safeBottom: this.safeBottom,
+      scrollOffset: this.scrollOffset,
+      loadingMore: this.loadingMore,
     })
-    return pending
-  }
-
-  private drawRetryButton(): Promise<void>[] {
-    const w = 120
-    const h = 40
-    const x = (this.screenW - w) / 2
-    const y = this.screenH * 0.52
-    this.retryRect = { x, y, w, h }
-    drawGlassPanel(this.bg, x, y, w, h, 20)
-    this.bg.roundRect(x, y, w, h, 20).stroke({ width: 1, color: WX_THEME.accent, alpha: 0.5 })
-    const t = new WxCanvasText('重试', wxTextStyle(WX_THEME.accent, 14, '600'))
-    t.anchor.set(0.5)
-    t.x = x + w / 2
-    t.y = y + h / 2
-    this.textLayer.addChild(t)
-    this.rowTexts.push(t)
-    return [t.ensureBaked()]
-  }
-
-  private drawList(data: LeaderboardResult): Promise<void>[] {
-    const listW = this.screenW - LIST_PAD_X * 2
-    const listTop = this.listTopY()
-    const meBarH = data.me ? ROW_H + ME_BAR_GAP : 0
-    const listBottom = this.screenH - this.safeBottom - BOTTOM_PAD - meBarH
-    const rowStride = ROW_H + ROW_GAP
-    const maxRows = Math.min(MAX_ROWS, Math.max(0, Math.floor((listBottom - listTop) / rowStride)))
-    const rows = data.list.slice(0, maxRows)
-    const pending: Promise<void>[] = []
-
-    rows.forEach((entry, i) => {
-      const y = listTop + i * rowStride
-      pending.push(...this.drawRow(LIST_PAD_X, y, listW, entry))
-    })
-
-    if (data.me) {
-      const y = this.screenH - this.safeBottom - BOTTOM_PAD - ROW_H
-      drawGlassPanelAccent(this.bg, LIST_PAD_X, y, listW, ROW_H, 14)
-      this.bg
-        .roundRect(LIST_PAD_X, y, listW, ROW_H, 14)
-        .stroke({ width: 1.5, color: WX_THEME.accent, alpha: 0.42 })
-      pending.push(...this.drawRowContent(LIST_PAD_X, y, listW, data.me, true))
-    }
-
-    return pending
-  }
-
-  private drawRow(x: number, y: number, w: number, entry: LeaderboardEntry): Promise<void>[] {
-    drawSurfacePanel(this.bg, x, y, w, ROW_H, 12)
-    return this.drawRowContent(x, y, w, entry, false)
-  }
-
-  private drawRowContent(
-    x: number,
-    y: number,
-    w: number,
-    entry: LeaderboardEntry,
-    isMe: boolean,
-  ): Promise<void>[] {
-    const cy = y + ROW_H / 2
-    const rankColor = isMe ? WX_THEME.accent : medalColor(entry.rank)
-
-    const rankText = new WxCanvasText(String(entry.rank), wxTextStyle(rankColor, 17, '700'))
-    rankText.anchor.set(0.5)
-    rankText.x = x + 30
-    rankText.y = cy
-
-    const nick = displayNickName(entry.nickName)
-    const label = isMe ? `我 · ${nick}` : nick
-    const nameStyle = wxTextStyle(isMe ? WX_THEME.text : WX_THEME.text, 15, isMe ? '600' : '500')
-    const nameText = new WxCanvasText(label, nameStyle)
-    nameText.anchor.set(0, 0.5)
-    nameText.x = x + 56
-    nameText.y = cy
-
-    const levelLabel = `第 ${entry.maxLevel} 关`
-    const levelText = new WxCanvasText(
-      levelLabel,
-      wxTextStyle(isMe ? WX_THEME.accent : WX_THEME.textMuted, 14, '600'),
-    )
-    levelText.anchor.set(1, 0.5)
-    levelText.x = x + w - 18
-    levelText.y = cy
-
-    const pending: Promise<void>[] = []
-    for (const t of [rankText, nameText, levelText]) {
-      this.textLayer.addChild(t)
-      this.rowTexts.push(t)
-      pending.push(t.ensureBaked())
-    }
-    return pending
-  }
-
-  private clearRowTexts(): void {
-    for (const t of this.rowTexts) {
-      this.textLayer.removeChild(t)
-      t.destroy()
-    }
-    this.rowTexts.length = 0
+    this.syncHitsFromLayer()
   }
 
   override destroy(options?: Parameters<Container['destroy']>[0]): void {
-    this.clearRowTexts()
+    this.canvasLayer.destroy()
     super.destroy(options)
   }
 }

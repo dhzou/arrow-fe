@@ -5,6 +5,7 @@ import DailySignInModal from '@/components/DailySignInModal.vue'
 import GameIcon from '@/components/icons/GameIcon.vue'
 import { computeHomeLayout } from '@/canvas-home/home-layout'
 import { MINIGAME_STORE } from '@/game/game-ui-content'
+import { dailyChallengeHomeTitle } from '@/game/daily-challenge'
 import { useProgressStore } from '@/stores/progress'
 import { playSound, resumeAudio } from '@/utils/sound'
 
@@ -36,11 +37,21 @@ onUnmounted(() => {
 
 const signInStatus = computed(() => progress.getDailySignInStatus())
 const canClaimDailySignIn = computed(() => signInStatus.value.canClaim)
+const dailyChallengeStatus = computed(() => progress.getDailyChallengeStatus())
+const dailyChallengeStatusLabel = computed(() => dailyChallengeHomeTitle(dailyChallengeStatus.value))
+const ctaMain = computed(() => (progress.currentLevel > 1 ? '继续闯关' : '开始游戏'))
+const levelLabel = computed(() => `第 ${progress.currentLevel} 关`)
 
 async function startGame() {
   await resumeAudio()
   playSound('tap')
   router.push({ name: 'game' })
+}
+
+async function startDailyChallenge() {
+  await resumeAudio()
+  playSound('tap')
+  router.push({ name: 'game', query: { mode: 'daily' } })
 }
 
 async function goSettings() {
@@ -70,73 +81,85 @@ async function claimSignIn() {
 
 <template>
   <main ref="homeRef" class="home">
-    <div class="stripes" />
-    <div class="glow glow-a" />
-    <div class="glow glow-b" />
+    <div class="ambient" aria-hidden="true" />
 
     <div ref="homeBodyRef" class="home-body">
-    <header class="hero ui-pop-in">
-      <p class="badge">
-        <GameIcon name="sparkle" :size="14" class="icon-accent" />
-        {{ MINIGAME_STORE.badge }}
-      </p>
-      <h1>{{ MINIGAME_STORE.name }}</h1>
-      <p class="subtitle">{{ MINIGAME_STORE.tagline }}</p>
-    </header>
+      <section class="stage ui-pop-in">
+        <p class="badge">
+          <GameIcon name="sparkle" :size="12" class="icon-accent" />
+          {{ MINIGAME_STORE.badge }}
+        </p>
+        <h1>{{ MINIGAME_STORE.name }}</h1>
+        <div class="preview">
+          <svg viewBox="0 0 100 100" class="path-demo" aria-hidden="true">
+            <defs>
+              <linearGradient id="homeSnakeGrad" gradientUnits="userSpaceOnUse" x1="20" y1="72" x2="68" y2="44">
+                <stop offset="0%" stop-color="var(--game-snake-from)" />
+                <stop offset="100%" stop-color="var(--game-snake-to)" />
+              </linearGradient>
+            </defs>
+            <path
+              class="path-snake"
+              d="M20 72 H46 V44 H68"
+              fill="none"
+              stroke="url(#homeSnakeGrad)"
+              stroke-width="5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <circle cx="68" cy="44" r="3.25" fill="var(--game-snake-head)" />
+            <circle cx="66.65" cy="42.75" r="0.65" fill="var(--game-board)" />
+            <circle cx="69.35" cy="42.75" r="0.65" fill="var(--game-board)" />
+          </svg>
+        </div>
+      </section>
 
-    <div class="preview">
-      <div class="mini-grid">
-        <svg viewBox="0 0 100 100" class="path-demo" aria-hidden="true">
-          <defs>
-            <linearGradient id="homeSnakeGrad" gradientUnits="userSpaceOnUse" x1="20" y1="72" x2="68" y2="44">
-              <stop offset="0%" stop-color="var(--game-snake-from)" />
-              <stop offset="100%" stop-color="var(--game-snake-to)" />
-            </linearGradient>
-          </defs>
-          <path
-            class="path-snake"
-            d="M20 72 H46 V44 H68"
-            fill="none"
-            stroke="url(#homeSnakeGrad)"
-            stroke-width="5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-          <circle cx="68" cy="44" r="3.25" fill="var(--game-snake-head)" />
-          <circle cx="66.65" cy="42.75" r="0.65" fill="var(--game-board)" />
-          <circle cx="69.35" cy="42.75" r="0.65" fill="var(--game-board)" />
-        </svg>
+      <button class="cta ui-tap ui-pop-in ui-pop-in--1" type="button" @click="startGame">
+        <span class="cta-main">{{ ctaMain }}</span>
+        <span class="cta-sub">{{ levelLabel }}</span>
+      </button>
+
+      <div class="footer-panel ui-pop-in ui-pop-in--2">
+        <button
+          class="daily-row ui-tap"
+          type="button"
+          @click="startDailyChallenge"
+        >
+          <span class="daily-leading">
+            <GameIcon name="calendar" :size="16" class="icon-accent-2" />
+            <span>今日挑战</span>
+          </span>
+          <span class="daily-trailing">
+            <span class="daily-status">{{ dailyChallengeStatusLabel }}</span>
+            <span class="daily-chevron" aria-hidden="true">›</span>
+            <span v-if="!dailyChallengeStatus.completed" class="daily-dot" aria-hidden="true" />
+          </span>
+        </button>
+
+        <div class="footer-divider" aria-hidden="true" />
+
+        <nav class="dock" aria-label="快捷入口">
+          <button class="dock-item ui-tap" type="button" @click="openSignIn">
+            <span class="dock-icon-wrap">
+              <GameIcon name="calendar" :size="20" class="icon-dock" />
+              <span v-if="canClaimDailySignIn" class="dock-dot" aria-hidden="true" />
+            </span>
+            <span>签到</span>
+          </button>
+          <button class="dock-item ui-tap" type="button">
+            <span class="dock-icon-wrap">
+              <GameIcon name="crown" :size="20" class="icon-dock" />
+            </span>
+            <span>排行</span>
+          </button>
+          <button class="dock-item ui-tap" type="button" @click="goSettings">
+            <span class="dock-icon-wrap">
+              <GameIcon name="settings" :size="20" class="icon-dock" />
+            </span>
+            <span>设置</span>
+          </button>
+        </nav>
       </div>
-    </div>
-
-    <div class="level-card ui-pop-in">
-      <div class="level-icon">
-        <GameIcon name="route" :size="28" class="icon-accent" />
-      </div>
-      <p class="label">当前进度</p>
-      <p class="level">第 {{ progress.currentLevel }} 关</p>
-      <p class="sub">连胜 {{ progress.winStreak }} · 从当前关卡继续</p>
-    </div>
-
-    <button class="start ui-tap" type="button" @click="startGame">
-      开始游戏
-    </button>
-
-    <div class="quick-row">
-      <button class="chip green ui-tap" type="button" @click="openSignIn">
-        <GameIcon name="calendar" :size="16" class="icon-accent-2" />
-        每日签到
-        <span v-if="canClaimDailySignIn" class="chip-dot" aria-hidden="true" />
-      </button>
-      <button class="chip blue ui-tap" type="button">
-        <GameIcon name="crown" :size="16" class="icon-accent" />
-        全服排行
-      </button>
-      <button class="chip purple ui-tap" type="button" @click="goSettings">
-        <GameIcon name="settings" :size="16" class="icon-accent" />
-        设置
-      </button>
-    </div>
     </div>
 
     <DailySignInModal
@@ -158,136 +181,95 @@ async function claimSignIn() {
   max-width: 480px;
   height: 100%;
   margin: 0 auto;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
   background: var(--game-bg);
   color: var(--game-text);
-  overflow-x: hidden;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  overflow: hidden;
+}
+
+.ambient {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% 18%, color-mix(in srgb, var(--game-accent) 8%, transparent), transparent),
+    repeating-linear-gradient(
+      135deg,
+      transparent,
+      transparent 20px,
+      color-mix(in srgb, var(--game-accent) 2.5%, transparent) 20px,
+      color-mix(in srgb, var(--game-accent) 2.5%, transparent) 40px
+    );
+  pointer-events: none;
 }
 
 .home-body {
+  position: relative;
+  z-index: 1;
   width: 100%;
-  padding: 32px 20px 28px;
+  min-height: 100%;
+  padding: max(24px, env(safe-area-inset-top, 0px)) 24px max(20px, env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
-.stripes {
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    135deg,
-    transparent,
-    transparent 16px,
-    color-mix(in srgb, var(--game-accent) 4%, transparent) 16px,
-    color-mix(in srgb, var(--game-accent) 4%, transparent) 32px
-  );
-  pointer-events: none;
-}
-
-.glow {
-  position: absolute;
-  width: 200px;
-  height: 200px;
-  border-radius: 50%;
-  filter: blur(56px);
-  pointer-events: none;
-  opacity: 0.16;
-}
-
-.glow-a {
-  top: -40px;
-  left: -60px;
-  background: var(--game-accent);
-  animation: ui-float-slow 8s ease-in-out infinite;
-}
-
-.glow-b {
-  bottom: 80px;
-  right: -40px;
-  background: var(--game-accent-2);
-  animation: ui-float-slow 10s ease-in-out 1s infinite reverse;
-}
-
-.icon-accent {
-  color: var(--game-accent);
-}
-
-.icon-accent-2 {
-  color: var(--game-accent-2);
-}
-
-.icon-btn-text {
-  color: var(--game-bg);
-}
-
-.hero {
-  position: relative;
+.stage {
+  width: 100%;
+  max-width: 300px;
   text-align: center;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   margin: 0 0 10px;
-  padding: 5px 14px;
+  padding: 4px 12px;
   border-radius: var(--game-radius-pill);
-  border: 1px solid var(--game-border);
-  background: var(--game-glass);
+  border: 1px solid color-mix(in srgb, var(--game-border) 70%, transparent);
+  background: color-mix(in srgb, var(--game-glass) 85%, transparent);
   font-size: 11px;
+  font-weight: 600;
   color: var(--game-accent);
   letter-spacing: 0.08em;
 }
 
-.hero h1 {
-  margin: 0 0 8px;
-  font-size: 28px;
+.stage h1 {
+  margin: 0 0 14px;
+  font-size: 26px;
   font-weight: 800;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
   color: var(--game-text);
-}
-
-.subtitle {
-  margin: 0;
-  font-size: 13px;
-  color: var(--game-text-muted);
-  line-height: 1.45;
 }
 
 .preview {
   position: relative;
-  width: min(280px, 72vw);
+  width: min(240px, 62vw);
   aspect-ratio: 1;
-  margin-bottom: 24px;
-  border-radius: 22px;
-  border: 1px solid color-mix(in srgb, var(--game-border) 80%, transparent);
+  margin: 0 auto;
+  border-radius: 20px;
   background: var(--game-board);
-  box-shadow: var(--game-shadow);
+  box-shadow:
+    0 16px 40px color-mix(in srgb, var(--game-text) 8%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--game-border) 40%, transparent);
 }
 
-.mini-grid {
+.preview::before {
+  content: '';
   position: absolute;
-  inset: 10%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 14px;
-  border: none;
-  background: transparent;
-  overflow: hidden;
+  inset: -20%;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--game-accent) 12%, transparent), transparent 70%);
+  pointer-events: none;
+  z-index: -1;
 }
 
 .path-demo {
-  position: relative;
-  width: 88%;
-  height: 88%;
+  position: absolute;
+  inset: 12%;
+  width: 76%;
+  height: 76%;
+  margin: auto;
 }
 
 .path-snake {
@@ -310,101 +292,186 @@ async function claimSignIn() {
   }
 }
 
-.level-card {
-  position: relative;
-  width: 100%;
-  max-width: 340px;
-  margin-bottom: 16px;
-  padding: 14px 18px 11px;
-  text-align: center;
-  border-radius: var(--game-radius);
-  border: 1px solid color-mix(in srgb, var(--game-border) 70%, transparent);
-  background: var(--game-surface);
-  box-shadow: var(--game-shadow);
+.ui-pop-in--1 {
+  animation-delay: 0.06s;
 }
 
-.level-card::after,
-.level-card::before {
-  content: none;
+.ui-pop-in--2 {
+  animation-delay: 0.12s;
 }
 
-.level-icon {
+.ui-pop-in--3 {
+  animation-delay: 0.18s;
+}
+
+.cta {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
   align-items: center;
-  width: 100%;
-  margin-bottom: 4px;
-}
-
-.label {
-  margin: 0;
-  font-size: 12px;
-  line-height: 14px;
-  color: var(--game-text-muted);
-}
-
-.level {
-  margin: 4px 0 0;
-  font-size: 32px;
-  line-height: 38px;
-  font-weight: 800;
-  background: var(--game-gradient);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-.sub {
-  margin: 0;
-  font-size: 12px;
-  line-height: 14px;
-  color: var(--game-text-dim);
-}
-
-.quick-row {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 0;
-  flex-wrap: wrap;
   justify-content: center;
+  gap: 2px;
+  width: 100%;
+  max-width: 300px;
+  min-height: 58px;
+  padding: 12px 20px;
+  margin-bottom: 10px;
+  border: none;
+  border-radius: 16px;
+  cursor: pointer;
+  color: #fff;
+  background: var(--game-gradient);
+  box-shadow:
+    0 10px 28px color-mix(in srgb, var(--game-accent) 28%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 20%, transparent);
 }
 
-.chip {
-  position: relative;
+.cta-main {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.cta-sub {
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.78;
+  letter-spacing: 0.04em;
+}
+
+.icon-accent-2 {
+  color: var(--game-accent-2);
+}
+
+.icon-muted {
+  color: var(--game-text-muted);
+  opacity: 0.75;
+}
+
+.icon-dock {
+  color: var(--game-accent-2);
+  opacity: 0.88;
+}
+
+.daily-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--game-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.footer-panel {
+  width: 100%;
+  max-width: 300px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--game-border) 50%, transparent);
+  background: color-mix(in srgb, var(--game-surface) 72%, transparent);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--game-text) 4%, transparent);
+  overflow: hidden;
+}
+
+.footer-divider {
+  height: 1px;
+  margin: 10px 14px 0;
+  background: color-mix(in srgb, var(--game-border) 45%, transparent);
+}
+
+.daily-leading,
+.daily-trailing {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 7px 12px;
-  border-radius: 10px;
+  gap: 8px;
+}
+
+.daily-trailing {
+  position: relative;
+  padding-right: 2px;
+}
+
+.daily-status {
   font-size: 12px;
-  border: 1px solid color-mix(in srgb, var(--game-border) 65%, transparent);
-  background: color-mix(in srgb, var(--game-glass) 55%, transparent);
-  color: var(--game-text-dim);
-  cursor: pointer;
+  font-weight: 600;
+  color: var(--game-accent-2);
 }
 
-.chip.green,
-.chip.blue,
-.chip.purple {
-  border-color: color-mix(in srgb, var(--game-border) 55%, transparent);
-  background: color-mix(in srgb, var(--game-glass) 30%, transparent);
+.daily-chevron {
+  font-size: 15px;
+  opacity: 0.45;
 }
 
-.chip .icon-accent,
-.chip .icon-accent-2 {
-  color: var(--game-text-muted);
-  opacity: 0.85;
-}
-
-.chip-dot {
+.daily-dot {
   position: absolute;
-  top: 4px;
-  right: 6px;
-  width: 8px;
-  height: 8px;
+  top: -2px;
+  right: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--game-danger);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--game-danger) 55%, transparent);
+}
+
+.dock {
+  display: flex;
+  width: 100%;
+  padding: 10px 8px 12px;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.dock-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: color-mix(in srgb, var(--game-text) 72%, var(--game-text-muted));
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.dock-icon-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--game-border) 42%, transparent);
+  background: color-mix(in srgb, var(--game-glass) 55%, transparent);
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.dock-item:active .dock-icon-wrap {
+  transform: scale(0.96);
+  border-color: color-mix(in srgb, var(--game-accent-2) 28%, var(--game-border));
+  background: color-mix(in srgb, var(--game-accent) 10%, var(--game-glass));
+}
+
+.dock-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--game-danger);
+  border: 1.5px solid color-mix(in srgb, var(--game-surface-strong) 80%, transparent);
 }
 
 .sign-in-toast {
@@ -432,24 +499,5 @@ async function claimSignIn() {
 .toast-fade-leave-to {
   opacity: 0;
   transform: translateX(-50%) translateY(8px);
-}
-
-.start {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  max-width: 340px;
-  min-height: 48px;
-  margin-bottom: 14px;
-  padding: 14px 20px;
-  border: none;
-  border-radius: 12px;
-  font-size: 17px;
-  font-weight: 800;
-  color: #ffffff;
-  cursor: pointer;
-  background: var(--game-gradient);
-  box-shadow: 0 6px 20px color-mix(in srgb, var(--game-accent) 22%, transparent);
 }
 </style>

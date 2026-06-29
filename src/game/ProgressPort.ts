@@ -1,4 +1,5 @@
 import type { DailySignInStatus, SignInReward } from '@/game/daily-sign-in'
+import type { DailyChallengeCompleteResult, DailyChallengeStatus } from '@/game/daily-challenge'
 import type { DailyShareRecordResult } from '@/game/daily-share-reward'
 import type { SaveData } from '@/game-core/types'
 import type { ShareRewardType } from '@/platform/types'
@@ -25,5 +26,7 @@ export interface ProgressPort {
   getDailyShareRemaining(type: ShareRewardType): number
   canDailyShareForReward(type: ShareRewardType): boolean
   recordDailyShareReward(type: ShareRewardType): DailyShareRecordResult
+  getDailyChallengeStatus(): DailyChallengeStatus
+  completeDailyChallenge(elapsedMs: number): DailyChallengeCompleteResult
   resetAll(): SaveData
 }

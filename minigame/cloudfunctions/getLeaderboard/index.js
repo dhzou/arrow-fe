@@ -17,18 +17,20 @@ async function findRankingByOpenId(col, openId) {
 /** 按 maxLevel 降序获取全服排行 + 当前玩家名次 */
 exports.main = async (event) => {
   const { OPENID } = cloud.getWXContext()
-  const limit = Math.min(100, Math.max(1, Math.floor(Number(event.limit) || 50)))
+  const limit = Math.min(100, Math.max(1, Math.floor(Number(event.limit) || 20)))
+  const offset = Math.max(0, Math.floor(Number(event.offset) || 0))
 
   const col = db.collection('rankings')
   const listRes = await col
     .orderBy('maxLevel', 'desc')
     .orderBy('updatedAt', 'asc')
+    .skip(offset)
     .limit(limit)
     .field({ openId: true, nickName: true, maxLevel: true, updatedAt: true })
     .get()
 
   const list = listRes.data.map((row, i) => ({
-    rank: i + 1,
+    rank: offset + i + 1,
     nickName: sanitizeNickName(row.nickName, row.openId || row._openid),
     maxLevel: row.maxLevel || 1,
   }))
@@ -47,5 +49,5 @@ exports.main = async (event) => {
     }
   }
 
-  return { ok: true, list, me }
+  return { ok: true, list, me, hasMore: list.length === limit }
 }

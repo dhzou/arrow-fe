@@ -64,6 +64,9 @@ export async function wxShareForHint(payload: ShareForHintPayload): Promise<Shar
   if (outcome !== 'granted' || !payload.rewardType || !isWxShareRewardCloudAvailable()) {
     return outcome
   }
+  if (payload.excludeFromDailyLimit) {
+    return 'granted'
+  }
 
   const record = await tryRecordWxShareReward(payload.rewardType)
   if (record === 'limited') return 'limited'

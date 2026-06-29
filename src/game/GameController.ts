@@ -7,11 +7,36 @@ import { getPlatform } from '@/platform'
 import type { ShareForHintPayload, ShareRewardType } from '@/platform/types'
 import { playSound, resumeAudio } from '@/utils/sound'
 import { triggerBlockedFeedback } from '@/utils/feedback'
-import { SHARE_ASSIST, SHARE_HINT, SHARE_LIFE, SHARE_LIMIT_TOAST, SHARE_TIME, SHARE_TIME_BONUS_MS } from '@/game/game-ui-content'
+import { getDailyChallengeLevelAsync } from '@/game-core/daily-challenge-level'
+import { PlayTimeTracker } from '@/game-core/play-time-tracker'
+import type { DailyChallengeCompleteResult } from '@/game/daily-challenge'
+import {
+  dailyChallengeTimeLimitMs,
+  dailyChallengeTimeRemainingMs,
+  DAILY_CHALLENGE_BASE_TIME_MS,
+} from '@/game/daily-challenge'
+import {
+  BOARD_ZOOM_DEFAULT,
+  IDLE_HINT_MS,
+  IDLE_HINT_TOAST,
+  isMilestoneShareLevel,
+  milestoneShareText,
+  MINIGAME_STORE,
+  SHARE_ASSIST,
+  SHARE_HINT,
+  SHARE_LIFE,
+  SHARE_LIFE_DESCRIPTION,
+  SHARE_LIMIT_TOAST,
+  SHARE_MILESTONE,
+  SHARE_TIME,
+  SHARE_TIME_DESCRIPTION,
+  SHARE_TIME_BONUS_MS,
+} from '@/game/game-ui-content'
 import type { ProgressPort } from './ProgressPort'
 
 export type GameOverlay = 'none' | 'complete' | 'failed' | 'tutorial' | 'pause'
 export type FailReason = 'lives' | 'time'
+export type GameMode = 'main' | 'daily'
 
 export interface GameControllerHooks {
   onHudSync?: () => void
@@ -21,6 +46,7 @@ export interface GameControllerHooks {
   onLoadingChange?: (loading: boolean) => void
   onShareHintGranted?: (message: string) => void
   onLevelComplete?: (levelNumber: number, newCurrentLevel: number) => void
+  onDailyChallengeComplete?: (result: DailyChallengeCompleteResult) => void
   /** 分享前截取棋盘等区域，返回微信临时文件路径 */
   captureShareImage?: () => Promise<string | undefined>
 }
@@ -41,13 +67,23 @@ export class GameController {
   failReason: FailReason | null = null
 
   devPlay = false
+  gameMode: GameMode = 'main'
+  dailyCompleteResult: DailyChallengeCompleteResult | null = null
 
   private hintTimer: number | null = null
+  private readonly playTime = new PlayTimeTracker()
   private shareForHintInFlight = false
   private shareForAssistInFlight = false
   private shareForTimeInFlight = false
   private shareForLifeInFlight = false
+  private shareForMilestoneInFlight = false
   private shareHintToastTimer: number | null = null
+  private idleHintTimer: number | null = null
+  private idleHintShownThisLevel = false
+  private playTimeHudTickId: number | null = null
+  private dailyTimeUpPendingWatchId: number | null = null
+  /** 今日挑战到点但路径动画未结束 — 等走完再弹窗 */
+  private dailyTimeUpPending = false
   /** 进关 / 下一步时递增，动画回调比对以防 stale onLevelComplete */
   private sessionEpoch = 0
   private readonly levelTimer: LevelTimer
@@ -67,7 +103,24 @@ export class GameController {
   }
 
   get levelLabel(): string {
+    if (this.gameMode === 'daily') return '今日挑战'
     return `第 ${this.session?.level.levelNumber ?? this.progress.currentLevel} 关`
+  }
+
+  get isDailyMode(): boolean {
+    return this.gameMode === 'daily'
+  }
+
+  /** 今日挑战 — 暂停-aware 已用时间（与排行 timeMs 一致） */
+  get dailyPlayTimeMs(): number {
+    if (this.gameMode !== 'daily') return 0
+    return this.playTime.elapsedMs()
+  }
+
+  /** 今日挑战当前限时（含分享续时） */
+  get dailyTimeLimitMs(): number {
+    if (!this.isDailyMode || !this.session) return DAILY_CHALLENGE_BASE_TIME_MS
+    return dailyChallengeTimeLimitMs(this.session.shareTimeUsed)
   }
 
   get lives(): number {
@@ -113,11 +166,59 @@ export class GameController {
   }
 
   async startSession(levelNumber?: number): Promise<void> {
+    this.gameMode = 'main'
+    this.dailyCompleteResult = null
     const level = levelNumber ?? this.progress.currentLevel
     await this.loadLevelNumber(level)
   }
 
+  async startDailySession(): Promise<void> {
+    this.gameMode = 'daily'
+    this.dailyCompleteResult = null
+    this.sessionEpoch++
+    this.renderer.abortPendingMoveAnimations()
+    this.dismissResultOverlay()
+    this.levelLoading = true
+    this.inputLocked = true
+    this.renderer.setInputLocked(true)
+    this.hooks.onLoadingChange?.(true)
+
+    try {
+      const level = await getDailyChallengeLevelAsync()
+      this.session = SnakeSession.fromLevel(level)
+      this.syncConsumablesFromProgress()
+      this.resetAssist()
+      this.overlay = 'none'
+      this.failReason = null
+      this.renderer.setLevelNumber(level.levelNumber)
+      this.renderer.clearHint()
+      this.renderer.clearBlockedSnakeMarks()
+      this.applyLevelTimeLimit(level.levelNumber)
+      await this.presentLevel(true)
+      this.syncHudStats()
+      this.overlay = 'none'
+      this.inputLocked = false
+      this.renderer.setInputLocked(false)
+      this.hooks.onOverlayChange?.('none')
+      this.resetIdleHintState()
+      this.dailyTimeUpPending = false
+      this.stopDailyTimeUpPendingWatch()
+      this.playTime.reset()
+      this.syncDailyPlayTime()
+      this.scheduleIdleHint()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '今日挑战加载失败，请重试。'
+      this.hooks.onLoadError?.(message)
+    } finally {
+      this.levelLoading = false
+      this.hooks.onLoadingChange?.(false)
+      this.syncLevelTimer()
+    }
+  }
+
   async startCustomSession(level: SnakeLevelData): Promise<void> {
+    this.gameMode = 'main'
+    this.dailyCompleteResult = null
     await this.loadCustomLevel(level)
   }
 
@@ -142,6 +243,8 @@ export class GameController {
       await this.presentLevel(true)
       this.syncHudStats()
       this.hooks.onOverlayChange?.('none')
+      this.resetIdleHintState()
+      this.scheduleIdleHint()
     } catch (err) {
       const message = err instanceof Error ? err.message : '关卡加载失败，请重试。'
       this.hooks.onLoadError?.(message)
@@ -150,6 +253,10 @@ export class GameController {
       this.hooks.onLoadingChange?.(false)
       this.syncLevelTimer()
     }
+  }
+
+  private resetBoardZoom(): void {
+    this.renderer.setZoom(BOARD_ZOOM_DEFAULT)
   }
 
   private dismissResultOverlay(): void {
@@ -183,6 +290,8 @@ export class GameController {
       await this.presentLevel(true)
       this.syncHudStats()
       this.applyTutorialOnLevelLoad(level)
+      this.resetIdleHintState()
+      this.scheduleIdleHint()
     } catch (err) {
       const message = err instanceof Error ? err.message : '关卡加载失败，请重试。'
       this.hooks.onLoadError?.(message)
@@ -221,6 +330,7 @@ export class GameController {
       return
     }
     void resumeAudio()
+    this.resetIdleHintTimer()
     const current = this.session
     const snapshot = current.currentSnakes
     const target = findSnakeAt(snapshot, x, y)
@@ -233,6 +343,7 @@ export class GameController {
     if (result.type === 'blocked') {
       this.inputLocked = true
       this.renderer.setInputLocked(true)
+      this.syncDailyPlayTime()
       void triggerBlockedFeedback()
       const moveEpoch = this.sessionEpoch
       this.renderer.animateBlocked(snapshot, target, current.width, current.height, () => {
@@ -240,8 +351,10 @@ export class GameController {
         this.syncHudStats()
         if (result.lifeLost && current.isFailed) {
           if (this.overlay === 'complete') return
+          this.dailyTimeUpPending = false
           this.failReason = 'lives'
           this.overlay = 'failed'
+          this.resetIdleHintTimer()
           this.inputLocked = true
           this.renderer.setInputLocked(true)
           this.levelTimer.stop()
@@ -250,48 +363,76 @@ export class GameController {
         }
         this.inputLocked = false
         this.renderer.setInputLocked(false)
+        this.syncDailyPlayTime()
+        this.tryFlushDailyTimeUpPending()
+        this.scheduleIdleHint()
       })
       return
     }
 
     playSound('move')
     this.levelTimer.pause()
+    this.syncDailyPlayTime()
     const moveEpoch = this.sessionEpoch
     this.renderer.animateMove(target, snapshot, current.width, current.height, () => {
       if (this.sessionEpoch !== moveEpoch || this.levelLoading) return
       this.syncHudStats()
       if (result.type === 'complete') {
+        this.dailyTimeUpPending = false
         this.onLevelComplete()
         return
       }
+      if (this.tryFlushDailyTimeUpPending()) return
       if (this.overlay === 'none') {
         this.levelTimer.start()
+        this.syncDailyPlayTime()
+        this.scheduleIdleHint()
       }
     })
   }
 
   onLevelComplete(): void {
     if (!this.session || this.overlay === 'complete' || this.levelLoading) return
+    this.dailyTimeUpPending = false
     this.failReason = null
     playSound('complete')
     this.levelTimer.stop()
+    this.syncDailyPlayTime()
     this.overlay = 'complete'
+    this.resetIdleHintTimer()
     this.hooks.onOverlayChange?.('complete')
     this.inputLocked = false
     this.renderer.setInputLocked(false)
     if (!this.devPlay) {
-      this.progress.completeLevel(this.session.level.levelNumber)
-      this.progress.addWinStreak()
-      this.hooks.onLevelComplete?.(
-        this.session.level.levelNumber,
-        this.progress.currentLevel,
-      )
+      if (this.gameMode === 'daily') {
+        const elapsedMs = this.playTime.elapsedMs()
+        this.dailyCompleteResult = this.progress.completeDailyChallenge(elapsedMs)
+        if (this.dailyCompleteResult.rewardGranted) {
+          this.syncConsumablesFromProgress()
+        }
+        this.hooks.onDailyChallengeComplete?.(this.dailyCompleteResult)
+      } else {
+        this.progress.completeLevel(this.session.level.levelNumber)
+        this.progress.addWinStreak()
+        this.hooks.onLevelComplete?.(
+          this.session.level.levelNumber,
+          this.progress.currentLevel,
+        )
+      }
     }
+  }
+
+  handleDailyReplay(): void {
+    if (this.gameMode !== 'daily') return
+    playSound('tap')
+    this.resetBoardZoom()
+    void this.startDailySession()
   }
 
   handleReset(): void {
     if (!this.session || this.inputLocked) return
     playSound('tap')
+    this.resetBoardZoom()
     this.session.reset()
     this.overlay = 'none'
     this.failReason = null
@@ -320,25 +461,162 @@ export class GameController {
       return
     }
     if (this.overlay !== 'none') return
+    if (this.gameMode === 'daily') {
+      if (!this.dailyTimeUpPending) {
+        this.playTime.freezeAt(this.dailyTimeLimitMs)
+        this.timeRemainingMs = 0
+      }
+      this.syncDailyPlayTime()
+    }
     void triggerBlockedFeedback()
     this.failReason = 'time'
     this.overlay = 'failed'
+    this.resetIdleHintTimer()
     this.inputLocked = true
     this.renderer.setInputLocked(true)
     this.levelTimer.stop()
     this.hooks.onOverlayChange?.('failed')
   }
 
+  /** 今日挑战 — 已用时间达到当前限时（3:30 / 4:30 / …） */
+  private checkDailyTimeLimit(): void {
+    if (!this.isDailyMode || !this.session || this.levelLoading) return
+    if (this.overlay !== 'none' || this.dailyTimeUpPending) return
+    const elapsed = this.playTime.elapsedMs()
+    const limit = this.dailyTimeLimitMs
+    this.timeRemainingMs = dailyChallengeTimeRemainingMs(elapsed, this.session.shareTimeUsed)
+    if (elapsed < limit) return
+    if (this.renderer.isBoardAnimating()) {
+      this.armDailyTimeUpPending()
+      return
+    }
+    this.onTimeUp()
+  }
+
+  /** 到点且路径仍在走 — 冻结计时、锁操作，动画结束后再弹窗 */
+  private armDailyTimeUpPending(): void {
+    if (this.dailyTimeUpPending) return
+    this.dailyTimeUpPending = true
+    this.playTime.freezeAt(this.dailyTimeLimitMs)
+    this.timeRemainingMs = 0
+    this.inputLocked = true
+    this.renderer.setInputLocked(true)
+    this.syncDailyPlayTime()
+    this.startDailyTimeUpPendingWatch()
+    this.hooks.onHudSync?.()
+  }
+
+  private startDailyTimeUpPendingWatch(): void {
+    if (this.dailyTimeUpPendingWatchId !== null) return
+    const watch = (): void => {
+      this.dailyTimeUpPendingWatchId = null
+      if (!this.dailyTimeUpPending) return
+      if (this.tryFlushDailyTimeUpPending()) return
+      this.dailyTimeUpPendingWatchId = getPlatform().setTimeout(watch, 50)
+    }
+    this.dailyTimeUpPendingWatchId = getPlatform().setTimeout(watch, 50)
+  }
+
+  private stopDailyTimeUpPendingWatch(): void {
+    if (this.dailyTimeUpPendingWatchId !== null) {
+      getPlatform().clearTimeout(this.dailyTimeUpPendingWatchId)
+      this.dailyTimeUpPendingWatchId = null
+    }
+  }
+
+  /** @returns 是否已弹出「时间到」或判通关 */
+  private tryFlushDailyTimeUpPending(): boolean {
+    if (!this.dailyTimeUpPending) return false
+    if (this.renderer.isBoardAnimating()) return false
+    if (!this.session || this.overlay !== 'none') {
+      this.dailyTimeUpPending = false
+      this.stopDailyTimeUpPendingWatch()
+      return false
+    }
+    if (this.session.isComplete) {
+      this.dailyTimeUpPending = false
+      this.stopDailyTimeUpPendingWatch()
+      this.onLevelComplete()
+      return true
+    }
+    this.dailyTimeUpPending = false
+    this.stopDailyTimeUpPendingWatch()
+    this.onTimeUp()
+    return true
+  }
+
   private syncLevelTimer(): void {
+    if (this.gameMode === 'daily') {
+      this.levelTimer.stop()
+      if (this.session) {
+        this.timeRemainingMs = dailyChallengeTimeRemainingMs(
+          this.playTime.elapsedMs(),
+          this.session.shareTimeUsed,
+        )
+      } else {
+        this.timeRemainingMs = DAILY_CHALLENGE_BASE_TIME_MS
+      }
+      this.syncDailyPlayTime()
+      return
+    }
     if (this.levelLoading || this.overlay === 'complete' || this.overlay === 'failed') {
       this.levelTimer.stop()
+      this.syncDailyPlayTime()
       return
     }
     if (this.overlay === 'pause' || this.overlay === 'tutorial') {
       this.levelTimer.pause()
+      this.syncDailyPlayTime()
       return
     }
     this.levelTimer.start()
+    this.syncDailyPlayTime()
+  }
+
+  private syncDailyPlayTime(): void {
+    if (this.gameMode !== 'daily') {
+      this.stopPlayTimeHudTick()
+      return
+    }
+    const shouldRun =
+      !this.levelLoading &&
+      this.overlay === 'none' &&
+      !this.inputLocked &&
+      !this.dailyTimeUpPending
+    if (shouldRun) {
+      this.playTime.start()
+      this.startPlayTimeHudTick()
+    } else {
+      this.playTime.pause()
+      this.stopPlayTimeHudTick()
+      this.hooks.onHudSync?.()
+    }
+  }
+
+  private startPlayTimeHudTick(): void {
+    if (this.playTimeHudTickId !== null) return
+    const tick = (): void => {
+      this.playTimeHudTickId = null
+      if (this.gameMode !== 'daily') return
+      const shouldRun =
+        !this.levelLoading &&
+        this.overlay === 'none' &&
+        !this.inputLocked &&
+        !this.dailyTimeUpPending
+      if (!shouldRun) return
+      this.checkDailyTimeLimit()
+      if (this.overlay !== 'none') return
+      this.hooks.onHudSync?.()
+      this.playTimeHudTickId = getPlatform().setTimeout(tick, 200)
+    }
+    this.playTimeHudTickId = getPlatform().setTimeout(tick, 200)
+  }
+
+  private stopPlayTimeHudTick(): void {
+    if (this.playTimeHudTickId !== null) {
+      getPlatform().clearTimeout(this.playTimeHudTickId)
+      this.playTimeHudTickId = null
+    }
   }
 
   handleTutorialNext(): void {
@@ -349,6 +627,7 @@ export class GameController {
       this.inputLocked = false
       this.renderer.setInputLocked(false)
       this.syncLevelTimer()
+      this.scheduleIdleHint()
       this.hooks.onOverlayChange?.('none')
       return
     }
@@ -357,10 +636,12 @@ export class GameController {
   }
 
   handleHint(): void {
+    this.resetIdleHintTimer()
     void this.handleHintAsync()
   }
 
   handleAssist(): void {
+    this.resetIdleHintTimer()
     void this.handleAssistAsync()
   }
 
@@ -525,13 +806,14 @@ export class GameController {
       this.overlay === 'failed' &&
       this.failReason === 'time' &&
       !!this.session?.canShareForTime() &&
-      this.progress.canDailyShareForReward('time') &&
+      (this.isDailyMode || this.progress.canDailyShareForReward('time')) &&
       typeof getPlatform().shareForHint === 'function'
     )
   }
 
   shareTimeRemaining(): number {
     const sessionRemaining = this.session?.shareTimeRemaining() ?? 0
+    if (this.isDailyMode) return sessionRemaining
     const dailyRemaining = this.progress.getDailyShareRemaining('time')
     return Math.min(sessionRemaining, dailyRemaining)
   }
@@ -541,15 +823,51 @@ export class GameController {
       this.overlay === 'failed' &&
       this.failReason === 'lives' &&
       !!this.session?.canShareForLife() &&
-      this.progress.canDailyShareForReward('life') &&
+      (this.isDailyMode || this.progress.canDailyShareForReward('life')) &&
       typeof getPlatform().shareForHint === 'function'
     )
   }
 
   shareLifeRemaining(): number {
     const sessionRemaining = this.session?.shareLifeRemaining() ?? 0
+    if (this.isDailyMode) return sessionRemaining
     const dailyRemaining = this.progress.getDailyShareRemaining('life')
     return Math.min(sessionRemaining, dailyRemaining)
+  }
+
+  canShareMilestone(): boolean {
+    return (
+      !this.isDailyMode &&
+      this.overlay === 'complete' &&
+      !!this.session &&
+      isMilestoneShareLevel(this.session.level.levelNumber) &&
+      typeof getPlatform().shareForHint === 'function'
+    )
+  }
+
+  handleShareMilestone(): void {
+    void this.handleShareMilestoneAsync()
+  }
+
+  private async handleShareMilestoneAsync(): Promise<void> {
+    if (!this.canShareMilestone() || !this.session || this.shareForMilestoneInFlight) return
+    const platform = getPlatform()
+    if (!platform.shareForHint) return
+
+    const level = this.session.level.levelNumber
+    const payload: ShareForHintPayload = {
+      ...SHARE_MILESTONE,
+      title: `第 ${level} 关 · ${MINIGAME_STORE.shareTitle}`,
+      text: milestoneShareText(level),
+    }
+
+    this.shareForMilestoneInFlight = true
+    try {
+      await resumeAudio()
+      await platform.shareForHint(this.withShareImage(payload))
+    } finally {
+      this.shareForMilestoneInFlight = false
+    }
   }
 
   handleShareForLife(): void {
@@ -564,7 +882,7 @@ export class GameController {
     this.shareForLifeInFlight = true
     try {
       await resumeAudio()
-      const outcome = await platform.shareForHint(this.withShareImage(SHARE_LIFE))
+      const outcome = await platform.shareForHint(this.buildSharePayload(SHARE_LIFE))
       if (!this.session || outcome === 'cancelled') return
       if (outcome === 'limited') {
         this.showShareHintToast(SHARE_LIMIT_TOAST)
@@ -599,7 +917,7 @@ export class GameController {
     this.shareForTimeInFlight = true
     try {
       await resumeAudio()
-      const outcome = await platform.shareForHint(this.withShareImage(SHARE_TIME))
+      const outcome = await platform.shareForHint(this.buildSharePayload(SHARE_TIME))
       if (!this.session || outcome === 'cancelled') return
       if (outcome === 'limited') {
         this.showShareHintToast(SHARE_LIMIT_TOAST)
@@ -607,6 +925,24 @@ export class GameController {
       }
       if (!this.recordShareRewardOrLimit('time')) return
       if (!this.session.grantShareTime()) return
+
+      if (this.isDailyMode) {
+        this.dailyTimeUpPending = false
+        this.failReason = null
+        this.overlay = 'none'
+        this.inputLocked = false
+        this.renderer.setInputLocked(false)
+        this.timeRemainingMs = dailyChallengeTimeRemainingMs(
+          this.playTime.elapsedMs(),
+          this.session.shareTimeUsed,
+        )
+        this.syncDailyPlayTime()
+        playSound('complete')
+        this.showShareHintToast(SHARE_TIME.grantedToast)
+        this.hooks.onOverlayChange?.('none')
+        this.hooks.onHudSync?.()
+        return
+      }
 
       this.levelTimer.addTime(SHARE_TIME_BONUS_MS)
       this.timeRemainingMs = this.levelTimer.remainingMs
@@ -625,6 +961,11 @@ export class GameController {
   }
 
   private applyLevelTimeLimit(levelNumber: number): void {
+    if (this.gameMode === 'daily') {
+      this.levelTimer.stop()
+      this.timeRemainingMs = DAILY_CHALLENGE_BASE_TIME_MS
+      return
+    }
     const limitMs = levelTimeLimitMs(levelNumber)
     this.levelTimer.reset(limitMs)
     this.timeRemainingMs = limitMs
@@ -635,13 +976,72 @@ export class GameController {
     return { ...payload, getShareImage: this.hooks.captureShareImage }
   }
 
+  /** 今日挑战续时/加命分享不计入每日 5 次上限 */
+  private buildSharePayload(payload: ShareForHintPayload): ShareForHintPayload {
+    const base = this.withShareImage(payload)
+    if (
+      !this.isDailyMode ||
+      (payload.rewardType !== 'time' && payload.rewardType !== 'life')
+    ) {
+      return base
+    }
+    return {
+      ...base,
+      excludeFromDailyLimit: true,
+      modalBody:
+        payload.rewardType === 'time' ? SHARE_TIME_DESCRIPTION : SHARE_LIFE_DESCRIPTION,
+    }
+  }
+
   private recordShareRewardOrLimit(type: ShareRewardType): boolean {
+    if (this.isDailyMode && (type === 'time' || type === 'life')) {
+      return true
+    }
     const result = this.progress.recordDailyShareReward(type)
     if (!result.ok) {
       this.showShareHintToast(SHARE_LIMIT_TOAST)
       return false
     }
     return true
+  }
+
+  private resetIdleHintState(): void {
+    this.resetIdleHintTimer()
+    this.idleHintShownThisLevel = false
+  }
+
+  private resetIdleHintTimer(): void {
+    if (this.idleHintTimer !== null) {
+      getPlatform().clearTimeout(this.idleHintTimer)
+      this.idleHintTimer = null
+    }
+  }
+
+  private scheduleIdleHint(): void {
+    this.resetIdleHintTimer()
+    if (
+      !this.session ||
+      this.levelLoading ||
+      this.overlay !== 'none' ||
+      this.inputLocked ||
+      this.idleHintShownThisLevel
+    ) {
+      return
+    }
+    this.idleHintTimer = getPlatform().setTimeout(() => {
+      this.idleHintTimer = null
+      if (
+        !this.session ||
+        this.levelLoading ||
+        this.overlay !== 'none' ||
+        this.inputLocked ||
+        this.idleHintShownThisLevel
+      ) {
+        return
+      }
+      this.idleHintShownThisLevel = true
+      this.showShareHintToast(IDLE_HINT_TOAST)
+    }, IDLE_HINT_MS)
   }
 
   private showShareHintToast(message: string): void {
@@ -676,6 +1076,7 @@ export class GameController {
     }
     playSound('tap')
     this.overlay = 'pause'
+    this.resetIdleHintTimer()
     this.inputLocked = true
     this.renderer.setInputLocked(true)
     this.syncLevelTimer()
@@ -683,6 +1084,7 @@ export class GameController {
   }
 
   handleNext(): void {
+    if (this.gameMode === 'daily') return
     playSound('tap')
     this.sessionEpoch++
     this.renderer.abortPendingMoveAnimations()
@@ -692,11 +1094,16 @@ export class GameController {
 
   handleReplay(): void {
     playSound('tap')
+    if (this.gameMode === 'daily') {
+      this.handleDailyReplay()
+      return
+    }
     if (this.overlay === 'pause') {
       this.closePause()
     } else {
       this.dismissResultOverlay()
     }
+    this.resetBoardZoom()
     void this.startSession(this.session?.level.levelNumber)
   }
 
@@ -706,6 +1113,7 @@ export class GameController {
     this.inputLocked = false
     this.renderer.setInputLocked(false)
     this.syncLevelTimer()
+    this.scheduleIdleHint()
     this.hooks.onOverlayChange?.('none')
   }
 
@@ -720,13 +1128,18 @@ export class GameController {
     this.syncLevelTimer()
   }
 
-  /** 离开对局页（回首页等）时停止倒计时，避免后台空跑 */
-  stopLevelTimer(): void {
+  /** 离开对局页（回首页/排行等）时清理后台定时器，避免首页误弹 idle toast */
+  leaveGameScreen(): void {
+    this.resetIdleHintTimer()
     this.levelTimer.stop()
+    this.syncDailyPlayTime()
   }
 
   destroy(): void {
+    this.stopPlayTimeHudTick()
+    this.stopDailyTimeUpPendingWatch()
     this.levelTimer.destroy()
+    this.resetIdleHintTimer()
     if (this.hintTimer !== null) {
       getPlatform().clearTimeout(this.hintTimer)
       this.hintTimer = null

@@ -1,4 +1,4 @@
-# 箭头消消乐
+# 箭头拐一拐
 
 2D 平面版箭头消除益智游戏 Web 原型，基于 Vue 3 + PixiJS 实现。
 
@@ -43,7 +43,8 @@ npm run build:wx
 
 1. 选择 **小游戏**（不是小程序）
 2. 导入 `minigame/` 目录
-3. 先执行 `npm run build:wx` 生成 `minigame/game.js`
+3. 先执行 `npm run build:wx` 生成 `minigame/game.js` 与 `minigame/subpackage/game.js`（对局分包）
+4. 若出现 `loadSubpackage:fail module not found`：确认打开的是 `minigame/` 而非仓库根目录；执行「清缓存 → 全部清除」后重新编译（分包由 `game.json` 动态加载，勿开启「过滤无依赖文件」）
 4. 编译运行
 
 **目录说明：**
