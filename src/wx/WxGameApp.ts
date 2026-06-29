@@ -40,7 +40,9 @@ import {
 import type { WxLeaderboardTab } from './WxLeaderboardOverlay'
 import { getWxThemeIndex } from './wx-theme'
 import { initAnalytics, track, trackScreen } from '@/utils/analytics'
+import { getAnalyticsSessionContext } from '@/utils/analytics-session'
 import { setupWxAnalytics } from '@/wx/wx-analytics'
+import { todayDateString } from '@/game-core/random'
 
 type WxScreen = 'home' | 'game' | 'leaderboard'
 
@@ -175,6 +177,8 @@ export class WxGameApp {
       setupWxAnalytics()
       this.analyticsBooted = true
       initAnalytics({ platform: 'wx' })
+      const today = todayDateString()
+      this.platform.storage.setItem(`arrow_analytics_launch_sent_${today}`, '1')
       this.trackScreenView()
       void this.syncRankingProgress()
       return
@@ -405,8 +409,24 @@ export class WxGameApp {
   private installAppLifecycle(): void {
     if (this.lifecycleInstalled || typeof wx === 'undefined') return
     this.lifecycleInstalled = true
-    wx.onShow?.(() => void this.onAppShow())
+    wx.onShow?.(() => {
+      this.bootstrapAnalytics()
+      this.reportAppLaunchIfNeeded()
+      void this.onAppShow()
+    })
     wx.onHide?.(() => this.onAppHide())
+  }
+
+  /** 从「最近使用」进入时没有冷启动，需在 onShow 补 app_launch */
+  private reportAppLaunchIfNeeded(): void {
+    if (!this.analyticsBooted) return
+    const today = todayDateString()
+    const sentKey = `arrow_analytics_launch_sent_${today}`
+    if (this.platform.storage.getItem(sentKey)) return
+    const ctx = getAnalyticsSessionContext(today)
+    if (!ctx.isFirstOpenToday) return
+    this.platform.storage.setItem(sentKey, '1')
+    track('app_launch', { platform: 'wx', first_open_today: 1 })
   }
 
   private onAppHide(): void {

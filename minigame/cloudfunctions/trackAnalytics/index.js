@@ -193,6 +193,15 @@ exports.main = async (event) => {
 
     if (name === 'app_launch') {
       await markDau(OPENID, today, installDate, cohortDay)
+    } else if (name === 'game_start') {
+      // 真机从「最近使用」进入时常无 app_launch，用 game_start 补 DAU / cohort
+      const dauCol = db.collection('analytics_dau')
+      const existing = await dauCol.where({ date: today, openId: OPENID }).limit(1).get()
+      if (existing.data.length === 0) {
+        await markDau(OPENID, today, installDate, cohortDay)
+      } else {
+        await updateCohort(OPENID, today, installDate || today)
+      }
     }
 
     accepted++
