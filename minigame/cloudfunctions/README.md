@@ -81,3 +81,44 @@
 - 排行列表支持 **上下滑动**；滚到底部自动加载下一页（每页 20 条，最多 100 条/次请求）
 - 本地 `bestTimeMs` 写入存档，首页即时展示；云端为全服权威排行
 
+---
+
+## 6. 数据看板（留存 · 广告漏斗）
+
+### 创建集合
+
+| 集合 | 用途 | 建议索引 |
+| --- | --- | --- |
+| `analytics_rollups` | 按日 metrics + DAU/新增/回访 | `date` 升序（唯一） |
+| `analytics_dau` | 每日活跃用户 `{ date, openId }` | `date` + `openId` 唯一组合 |
+| `analytics_cohorts` | 留存 cohort `{ openId, installDate, activeDates[] }` | `installDate` 升序 |
+
+权限：仅云函数可读写（客户端通过 `trackAnalytics` / `getAnalyticsDashboard` 间接访问）。
+
+### 部署云函数
+
+右键上传并部署：
+
+- `trackAnalytics` — 客户端批量上报，更新 rollups / DAU / cohort
+- `getAnalyticsDashboard` — 拉取近 N 天看板 JSON
+
+### 客户端埋点
+
+小游戏启动时 `WxGameApp` 会调用 `setupWxAnalytics()` + `initAnalytics()`。事件名见 `src/utils/analytics.ts`（与 We 分析自定义事件保持一致）。
+
+广告 SDK 接入后，在各步骤调用 `trackAdFunnel()` 或 `src/wx/wx-rewarded-ad-analytics.ts` 的 `reportRewardedAdStep()`。
+
+### 查看看板
+
+**Web 开发环境**：`npm run dev` → 打开 `/dev/analytics`，可「从云函数拉取」（需在微信开发者工具同源或粘贴 JSON）。
+
+**开发者工具 Console**：
+
+```js
+wx.cloud.callFunction({ name: 'getAnalyticsDashboard', data: { days: 14 } })
+```
+
+返回字段：`daily`（DAU/新增/回访）、`retention`（D1/D7）、`levelFunnel`、`adFunnel`、`totals`。
+
+上线初期数据少属正常；需真机/模拟器产生 `app_launch` 等事件后才有 rollup。
+

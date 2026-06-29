@@ -33,6 +33,7 @@ import {
   SHARE_TIME_BONUS_MS,
 } from '@/game/game-ui-content'
 import type { ProgressPort } from './ProgressPort'
+import { track } from '@/utils/analytics'
 
 export type GameOverlay = 'none' | 'complete' | 'failed' | 'tutorial' | 'pause'
 export type FailReason = 'lives' | 'time'
@@ -353,6 +354,11 @@ export class GameController {
           if (this.overlay === 'complete') return
           this.dailyTimeUpPending = false
           this.failReason = 'lives'
+          track('level_fail', {
+            mode: this.gameMode,
+            reason: 'lives',
+            level: current.level.levelNumber,
+          })
           this.overlay = 'failed'
           this.resetIdleHintTimer()
           this.inputLocked = true
@@ -407,11 +413,19 @@ export class GameController {
       if (this.gameMode === 'daily') {
         const elapsedMs = this.playTime.elapsedMs()
         this.dailyCompleteResult = this.progress.completeDailyChallenge(elapsedMs)
+        track('daily_challenge_complete', {
+          elapsed_ms: elapsedMs,
+          first_today: this.dailyCompleteResult.firstCompleteToday ? 1 : 0,
+        })
         if (this.dailyCompleteResult.rewardGranted) {
           this.syncConsumablesFromProgress()
         }
         this.hooks.onDailyChallengeComplete?.(this.dailyCompleteResult)
       } else {
+        track('level_complete', {
+          mode: 'main',
+          level: this.session.level.levelNumber,
+        })
         this.progress.completeLevel(this.session.level.levelNumber)
         this.progress.addWinStreak()
         this.hooks.onLevelComplete?.(
@@ -470,6 +484,11 @@ export class GameController {
     }
     void triggerBlockedFeedback()
     this.failReason = 'time'
+    track(this.gameMode === 'daily' ? 'daily_challenge_fail' : 'level_fail', {
+      mode: this.gameMode,
+      reason: 'time',
+      level: this.session.level.levelNumber,
+    })
     this.overlay = 'failed'
     this.resetIdleHintTimer()
     this.inputLocked = true
@@ -623,7 +642,10 @@ export class GameController {
     playSound('tap')
     if (this.tutorialStep >= 3) {
       this.overlay = 'none'
-      if (!this.devPlay) this.progress.markTutorialDone()
+      if (!this.devPlay) {
+        this.progress.markTutorialDone()
+        track('tutorial_done', { mode: this.gameMode })
+      }
       this.inputLocked = false
       this.renderer.setInputLocked(false)
       this.syncLevelTimer()
@@ -709,6 +731,7 @@ export class GameController {
         return
       }
       if (!this.recordShareRewardOrLimit('assist')) return
+      track('share_assist', { mode: this.gameMode })
       this.session.grantShareAssist()
       this.persistConsumables()
       playSound('complete')
@@ -784,6 +807,7 @@ export class GameController {
         return
       }
       if (!this.recordShareRewardOrLimit('hint')) return
+      track('share_hint', { mode: this.gameMode })
       this.session.grantShareHint()
       this.persistConsumables()
       playSound('complete')
@@ -889,6 +913,7 @@ export class GameController {
         return
       }
       if (!this.recordShareRewardOrLimit('life')) return
+      track('share_life', { mode: this.gameMode })
       if (!this.session.grantShareLife()) return
 
       this.failReason = null
@@ -924,6 +949,7 @@ export class GameController {
         return
       }
       if (!this.recordShareRewardOrLimit('time')) return
+      track('share_time', { mode: this.gameMode })
       if (!this.session.grantShareTime()) return
 
       if (this.isDailyMode) {

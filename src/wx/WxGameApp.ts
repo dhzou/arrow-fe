@@ -39,6 +39,8 @@ import {
 } from './wx-ranking'
 import type { WxLeaderboardTab } from './WxLeaderboardOverlay'
 import { getWxThemeIndex } from './wx-theme'
+import { initAnalytics, track, trackScreen } from '@/utils/analytics'
+import { setupWxAnalytics } from '@/wx/wx-analytics'
 
 type WxScreen = 'home' | 'game' | 'leaderboard'
 
@@ -103,6 +105,7 @@ export class WxGameApp {
   /** 仅冷启动首次进首页时延迟装饰动画，子页面返回不延迟 */
   private homeDecorDelayOnShow = true
   private lifecycleInstalled = false
+  private analyticsBooted = false
 
   async start(): Promise<void> {
     if (typeof globalThis !== 'undefined') {
@@ -162,10 +165,29 @@ export class WxGameApp {
     this.installAppLifecycle()
     this.syncHome()
 
-    void Promise.resolve().then(() => {
-      initWxCloud()
+    this.bootstrapAnalytics()
+  }
+
+  /** 等云开发就绪后再发 app_launch（仅一次） */
+  private bootstrapAnalytics(attempt = 0): void {
+    if (this.analyticsBooted) return
+    if (initWxCloud()) {
+      setupWxAnalytics()
+      this.analyticsBooted = true
+      initAnalytics({ platform: 'wx' })
+      this.trackScreenView()
       void this.syncRankingProgress()
-    })
+      return
+    }
+    if (attempt >= 30) {
+      console.warn('[analytics] cloud init failed, app_launch skipped')
+      return
+    }
+    this.platform.setTimeout(() => this.bootstrapAnalytics(attempt + 1), 100)
+  }
+
+  private trackScreenView(): void {
+    trackScreen(this.screen, { settings_open: this.settingsOpen ? 1 : 0 })
   }
 
   /** 首帧上屏后再烘焙首页文字，避免阻塞封面→首屏 */
@@ -308,9 +330,8 @@ export class WxGameApp {
       this.stopHomeDecorLoop()
     }
     this.renderer.forceRender()
+    this.trackScreenView()
   }
-
-  /** 动效循环前先完成文字烘焙（homeAnimBakePriority 会阻塞异步烘焙） */
   private async transitionHomeScreen(opts?: {
     preserveHomeVisual?: boolean
     coldStart?: boolean
@@ -654,6 +675,7 @@ export class WxGameApp {
     c.devPlay = false
     await ensureSnakeLevelsLoaded()
     await c.startDailySession()
+    track('game_start', { mode: 'daily' })
     this.syncHud()
     this.hud?.updateZoom(this.boardZoom)
     this.renderer.setZoom(this.boardZoom)
@@ -674,6 +696,10 @@ export class WxGameApp {
     c.devPlay = false
     await ensureSnakeLevelsLoaded()
     await c.startSession(levelNumber)
+    track('game_start', {
+      mode: 'main',
+      level: levelNumber ?? this.progress.currentLevel,
+    })
     this.syncHud()
     this.hud?.updateZoom(this.boardZoom)
     this.renderer.setZoom(this.boardZoom)
@@ -1262,9 +1288,11 @@ export class WxGameApp {
       return
     }
     if (action === 'claim') {
+      const signDay = this.progress.getDailySignInStatus().currentDay
       const result = this.progress.claimDailySignIn()
       if (result.ok) {
         playSound('complete')
+        track('sign_in_claim', { day: signDay })
         this.syncSignIn(result.message)
         this.syncHome()
         try {

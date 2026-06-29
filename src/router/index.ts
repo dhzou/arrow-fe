@@ -33,6 +33,12 @@ if (import.meta.env.DEV) {
     component: () => import('@/views/DevUiPreviewView.vue'),
     meta: { transition: 'route-slide' },
   })
+  routes.push({
+    path: '/dev/analytics',
+    name: 'dev-analytics',
+    component: () => import('@/views/DevAnalyticsView.vue'),
+    meta: { transition: 'route-slide' },
+  })
 }
 const router = createRouter({
   history: createWebHistory(),
