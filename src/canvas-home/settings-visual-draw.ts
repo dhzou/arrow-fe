@@ -350,10 +350,7 @@ export function drawSettingsModalVisual(
   ctx.textBaseline = 'middle'
   ctx.font = settingsFont(15, '600')
   ctx.fillStyle = hexCss(WX_THEME.text)
-  ctx.fillText('棋盘样式', layout.rowTitleX, themeLabelCy - 8)
-  ctx.font = settingsFont(12)
-  ctx.fillStyle = hexCss(WX_THEME.textMuted)
-  ctx.fillText(getBoardTheme(boardThemeIndex).label, layout.rowTitleX, themeLabelCy + 10)
+  ctx.fillText('棋盘样式', layout.rowTitleX, themeLabelCy)
 
   drawThemeSwatches(ctx, layout.themeSwatches, boardThemeIndex)
 

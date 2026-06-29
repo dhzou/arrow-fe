@@ -59,11 +59,20 @@ export interface DailySignInState {
   cycleDay: number
 }
 
+export interface DailyShareRewardState {
+  date: string
+  hint: number
+  assist: number
+  time: number
+  life: number
+}
+
 export interface SaveData {
   currentLevel: number
   completedLevels: number[]
   dailyChallenge: DailyChallengeState
   dailySignIn: DailySignInState
+  dailyShareReward: DailyShareRewardState
   settings: GameSettings
   tutorialDone: boolean
   winStreak: number

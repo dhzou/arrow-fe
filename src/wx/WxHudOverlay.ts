@@ -14,21 +14,20 @@ import {
 import {
   drawGlow,
   drawDiagGradientCircle,
-  BADGE_WARM_END,
-  BADGE_WARM_START,
-  drawGradientBadge,
   drawVerticalGradientRect,
   drawHudGlassBar,
   inRect,
+  numericBadgeWidth,
   type Rect,
 } from './wx-draw'
 import { drawWxGameIcon, drawZoomMagnifierStep } from './wx-game-icons'
-import { WxCanvasHearts, WxCanvasIcon } from './wx-canvas-icon'
+import { WxCanvasBadge, WxCanvasHearts, WxCanvasIcon } from './wx-canvas-icon'
 import { drawWxButtonPressHighlight, type WxButtonPressShape } from './wx-button-press'
-import { WX_THEME, WX_THEME_INDEX } from './wx-theme'
+import { WX_THEME, getWxThemeIndex } from './wx-theme'
 import { WxPauseCanvasLayer } from './WxPauseCanvasLayer'
 import { WxGameModalCanvasLayer } from './WxGameModalCanvasLayer'
 import { WxTutorialCanvasLayer } from './WxTutorialCanvasLayer'
+import { isWxGameBoardAnimActive } from './wx-canvas-bake'
 
 export type WxHudAction =
   | 'settings'
@@ -68,6 +67,8 @@ export interface WxHudState {
   zoomLocked: boolean
   canShareForHint: boolean
   canShareForAssist: boolean
+  shareHintRemaining: number
+  shareAssistRemaining: number
   canShareForTime: boolean
   shareTimeRemaining: number
   canShareForLife: boolean
@@ -125,14 +126,8 @@ export class WxHudOverlay extends Container {
     padX: 4,
     padY: 2,
   })
-  private readonly hintBadgeText = new WxCanvasText('0', wxTextStyle(WX_THEME.btnTextDark, 10, '800'), {
-    padX: 0,
-    padY: 0,
-  })
-  private readonly assistBadgeText = new WxCanvasText('0', wxTextStyle(WX_THEME.btnTextDark, 10, '800'), {
-    padX: 0,
-    padY: 0,
-  })
+  private readonly hintBadgeSprite = new WxCanvasBadge()
+  private readonly assistBadgeSprite = new WxCanvasBadge()
   private readonly hintLabelText = new WxCanvasText('提示', wxTextStyle(0xffffff, GAME_HUD.toolLabelFontSize, '600'), {
     padX: 0,
     padY: 0,
@@ -211,10 +206,10 @@ export class WxHudOverlay extends Container {
     this.addChild(this.zoomDynamicGfx)
     this.addChild(this.hintIconSprite)
     this.addChild(this.assistIconSprite)
+    this.addChild(this.hintBadgeSprite)
+    this.addChild(this.assistBadgeSprite)
     this.hudTextLayer.addChild(this.levelCanvasText)
     this.hudTextLayer.addChild(this.timerCanvasText)
-    this.hudTextLayer.addChild(this.hintBadgeText)
-    this.hudTextLayer.addChild(this.assistBadgeText)
     this.hudTextLayer.addChild(this.hintLabelText)
     this.hudTextLayer.addChild(this.assistLabelText)
     this.hudTextLayer.addChild(this.zoomBadgeText)
@@ -367,6 +362,8 @@ export class WxHudOverlay extends Container {
     this.heartsSprite.requestTextureRefresh()
     this.hintIconSprite.requestTextureRefresh()
     this.assistIconSprite.requestTextureRefresh()
+    this.hintBadgeSprite.requestTextureRefresh()
+    this.assistBadgeSprite.requestTextureRefresh()
     void this.rebakeHudTexts()
     if (this.state) this.redraw()
   }
@@ -375,18 +372,57 @@ export class WxHudOverlay extends Container {
   syncTheme(): void {
     this.pauseCanvasLayer.requestTextureRefresh()
     this.gameModalCanvasLayer.requestTextureRefresh()
-    this.tutorialCanvasLayer.invalidateBakedTexture()
+    this.tutorialCanvasLayer.requestTextureRefresh()
     this.pauseIconSprite.requestTextureRefresh()
     this.settingsIconSprite.requestTextureRefresh()
     this.heartsSprite.requestTextureRefresh()
     this.hintIconSprite.requestTextureRefresh()
     this.assistIconSprite.requestTextureRefresh()
+    this.hintBadgeSprite.requestTextureRefresh()
+    this.assistBadgeSprite.requestTextureRefresh()
     if (this.state) {
-      // setBoardThemeIndex → syncThemePack 已更新 WX_THEME_INDEX，但 state 仍可能是旧索引
-      this.state = { ...this.state, boardThemeIndex: WX_THEME_INDEX }
+      // setBoardThemeIndex → syncThemePack 已更新全局主题索引，但 state 仍可能是旧索引
+      this.state = { ...this.state, boardThemeIndex: getWxThemeIndex() }
       this.lastTopSig = ''
       this.lastBottomSig = ''
       this.redraw()
+      this.refreshVisibleModalLayers()
+    }
+  }
+
+  /** 主题切换后重烘焙当前可见弹窗（requestTextureRefresh 已清 cache，此处触发 refresh） */
+  private refreshVisibleModalLayers(): void {
+    const s = this.state
+    if (!s || s.loading) return
+    if (s.overlay === 'pause') {
+      this.pauseCanvasLayer.refresh(this.screenW, this.screenH, s.levelLabel)
+      return
+    }
+    if (s.overlay === 'complete') {
+      this.gameModalCanvasLayer.refresh(this.screenW, this.screenH, {
+        kind: 'complete',
+        levelLabel: s.levelLabel,
+        moves: s.moves,
+        winStreak: s.winStreak,
+      })
+      return
+    }
+    if (s.overlay === 'failed') {
+      const reason = s.failReason === 'time' ? 'time' : 'lives'
+      const copy = FAIL_COPY[reason]
+      this.gameModalCanvasLayer.refresh(this.screenW, this.screenH, {
+        kind: 'failed',
+        reason,
+        levelLabel: s.levelLabel,
+        title: copy.title,
+        hint: '',
+        shareTimeRemaining: s.canShareForTime ? s.shareTimeRemaining : 0,
+        shareLifeRemaining: s.canShareForLife ? s.shareLifeRemaining : 0,
+      })
+      return
+    }
+    if (s.overlay === 'tutorial') {
+      this.tutorialCanvasLayer.refresh(this.screenW, this.screenH, this.safeBottom, s.tutorialStep)
     }
   }
 
@@ -600,7 +636,9 @@ export class WxHudOverlay extends Container {
     this.modalContent.clear()
     this.pauseCanvasLayer.visible = false
     this.gameModalCanvasLayer.visible = false
-    this.tutorialCanvasLayer.visible = false
+    if (this.state?.overlay !== 'tutorial') {
+      this.tutorialCanvasLayer.visible = false
+    }
     this.errorText.visible = false
 
     if (!this.state) {
@@ -656,8 +694,8 @@ export class WxHudOverlay extends Container {
       this.zoomDynamicGfx.clear()
       this.hintIconSprite.visible = false
       this.assistIconSprite.visible = false
-      this.hintBadgeText.visible = false
-      this.assistBadgeText.visible = false
+      this.hintBadgeSprite.visible = false
+      this.assistBadgeSprite.visible = false
       this.hintLabelText.visible = false
       this.assistLabelText.visible = false
       this.zoomBadgeText.visible = false
@@ -689,8 +727,8 @@ export class WxHudOverlay extends Container {
     this.lastShareToastSig = ''
     this.levelCanvasText.visible = false
     this.timerCanvasText.visible = false
-    this.hintBadgeText.visible = false
-    this.assistBadgeText.visible = false
+    this.hintBadgeSprite.visible = false
+    this.assistBadgeSprite.visible = false
     this.hintLabelText.visible = false
     this.assistLabelText.visible = false
     this.zoomBadgeText.visible = false
@@ -755,14 +793,8 @@ export class WxHudOverlay extends Container {
         this.modalTertiaryRect = hits.tertiary
       }
     } else if (s.overlay === 'tutorial') {
+      // 纹理由 tickTutorialDecor 动效路径维护；静态 refresh 会与动画 cache key 冲突导致闪屏
       this.tutorialCanvasLayer.visible = true
-      const hits = this.tutorialCanvasLayer.refresh(
-        this.screenW,
-        this.screenH,
-        this.safeBottom,
-        s.tutorialStep,
-      )
-      if (hits) this.tutorialPrimaryRect = hits.primary
     }
 
     if (!modalOverlay && !s.loadError) {
@@ -800,7 +832,7 @@ export class WxHudOverlay extends Container {
   }
 
   private bottomToolsSignature(s: WxHudState): string {
-    return `${s.hintsRemaining}|${s.assistsRemaining}|${s.assistOn}|${s.canShareForHint}|${s.canShareForAssist}|${s.isPathStyle}|${s.tutorialLevel}|${s.boardThemeIndex}|${this.screenW}|${this.screenH}|${this.safeBottom}`
+    return `${s.hintsRemaining}|${s.assistsRemaining}|${s.assistOn}|${s.canShareForHint}|${s.canShareForAssist}|${s.shareHintRemaining}|${s.shareAssistRemaining}|${s.isPathStyle}|${s.tutorialLevel}|${s.boardThemeIndex}|${this.screenW}|${this.screenH}|${this.safeBottom}`
   }
 
   private drawTopBar(hudTop: number, s: WxHudState): void {
@@ -1051,14 +1083,15 @@ export class WxHudOverlay extends Container {
   }
 
   private async rebakeHudTexts(): Promise<void> {
+    if (isWxGameBoardAnimActive()) return
     const tasks = [this.levelCanvasText.ensureBaked(), this.timerCanvasText.ensureBaked()]
     if (this.pauseIconSprite.visible) tasks.push(this.pauseIconSprite.ensureBaked())
     if (this.settingsIconSprite.visible) tasks.push(this.settingsIconSprite.ensureBaked())
     if (this.heartsSprite.visible) tasks.push(this.heartsSprite.ensureBaked())
     if (this.hintIconSprite.visible) tasks.push(this.hintIconSprite.ensureBaked())
     if (this.assistIconSprite.visible) tasks.push(this.assistIconSprite.ensureBaked())
-    if (this.hintBadgeText.visible) tasks.push(this.hintBadgeText.ensureBaked())
-    if (this.assistBadgeText.visible) tasks.push(this.assistBadgeText.ensureBaked())
+    if (this.hintBadgeSprite.visible) tasks.push(this.hintBadgeSprite.ensureBaked())
+    if (this.assistBadgeSprite.visible) tasks.push(this.assistBadgeSprite.ensureBaked())
     if (this.hintLabelText.visible) tasks.push(this.hintLabelText.ensureBaked())
     if (this.assistLabelText.visible) tasks.push(this.assistLabelText.ensureBaked())
     if (this.zoomBadgeText.visible) tasks.push(this.zoomBadgeText.ensureBaked())
@@ -1099,8 +1132,9 @@ export class WxHudOverlay extends Container {
         '提示',
         s.hintsRemaining,
         s.canShareForHint,
+        s.shareHintRemaining,
         this.hintLabelText,
-        this.hintBadgeText,
+        this.hintBadgeSprite,
         chromeSplit,
         false,
         theme,
@@ -1112,8 +1146,9 @@ export class WxHudOverlay extends Container {
         '辅助',
         s.assistsRemaining,
         s.canShareForAssist,
+        s.shareAssistRemaining,
         this.assistLabelText,
-        this.assistBadgeText,
+        this.assistBadgeSprite,
         chromeSplit,
         s.assistOn,
         theme,
@@ -1134,8 +1169,9 @@ export class WxHudOverlay extends Container {
     label: string,
     count: number,
     canShare: boolean,
+    shareRemaining: number,
     labelText: WxCanvasText,
-    badgeText: WxCanvasText,
+    badgeSprite: WxCanvasBadge,
     chromeSplit = false,
     active = false,
     theme: BoardTheme = getBoardTheme(DEFAULT_BOARD_THEME_INDEX),
@@ -1156,13 +1192,13 @@ export class WxHudOverlay extends Container {
       alpha: ringAlpha,
     })
 
-    const badgeLabel = count > 0 ? String(count) : canShare ? '+' : '0'
+    const badgeLabel = count > 0 ? String(count) : canShare ? String(shareRemaining) : '0'
     this.drawNumericBadge(
-      iconCx + iconR + 4 - this.badgeWidth(badgeLabel),
+      iconCx + iconR + 4 - numericBadgeWidth(badgeLabel),
       iconCy - iconR - 3,
       badgeLabel,
       count <= 0 && canShare && !active,
-      badgeText,
+      badgeSprite,
     )
 
     const iconSprite = iconName === 'assist' ? this.assistIconSprite : this.hintIconSprite
@@ -1373,13 +1409,13 @@ export class WxHudOverlay extends Container {
     })
 
     const count = s.assistsRemaining
-    const label = count > 0 ? String(count) : s.canShareForAssist ? '+' : '0'
+    const label = count > 0 ? String(count) : s.canShareForAssist ? String(s.shareAssistRemaining) : '0'
     this.drawNumericBadge(
-      iconX + iconR + 4 - this.badgeWidth(label),
+      iconX + iconR + 4 - numericBadgeWidth(label),
       iconY - iconR - 3,
       label,
       count <= 0 && s.canShareForAssist && !s.assistOn,
-      this.assistBadgeText,
+      this.assistBadgeSprite,
     )
   }
 
@@ -1405,20 +1441,14 @@ export class WxHudOverlay extends Container {
 
     const count = s.hintsRemaining
     const label =
-      count > 0 ? String(count) : s.canShareForHint ? '+' : '0'
+      count > 0 ? String(count) : s.canShareForHint ? String(s.shareHintRemaining) : '0'
     this.drawNumericBadge(
-      iconX + iconR + 4 - this.badgeWidth(label),
+      iconX + iconR + 4 - numericBadgeWidth(label),
       iconY - iconR - 3,
       label,
       count <= 0 && s.canShareForHint,
-      this.hintBadgeText,
+      this.hintBadgeSprite,
     )
-  }
-
-  private badgeWidth(label: string): number {
-    if (label.length <= 1) return 16
-    if (label.length <= 2) return 20
-    return Math.min(36, 12 + label.length * 6)
   }
 
   private drawNumericBadge(
@@ -1426,31 +1456,14 @@ export class WxHudOverlay extends Container {
     y: number,
     label: string,
     warm: boolean,
-    textNode: WxCanvasText,
+    badgeSprite: WxCanvasBadge,
   ): void {
     const h = 16
-    const w = this.badgeWidth(label)
-    const [c1, c2] = warm
-      ? [BADGE_WARM_START, BADGE_WARM_END]
-      : [WX_THEME.accent, WX_THEME.accent2]
-    // 角标底画在 bgBottom；路径风图标改 Canvas2D 烘焙，避免 poly fill 破坏同批 fill
-    drawGradientBadge(
-      this.bgBottom,
-      x,
-      y,
-      w,
-      h,
-      c1,
-      c2,
-      WX_THEME.surfaceStrong,
-      WX_THEME.surfaceStrongAlpha,
-    )
-    textNode.text = label
-    textNode.setFill(WX_THEME.btnTextDark)
-    textNode.anchor.set(0.5)
-    textNode.x = x + w / 2
-    textNode.y = y + h / 2 + 0.5
-    textNode.visible = true
+    const w = numericBadgeWidth(label)
+    badgeSprite.configure(label, warm)
+    badgeSprite.x = x + w / 2
+    badgeSprite.y = y + h / 2
+    badgeSprite.visible = true
   }
 
   private clearShareToast(): void {
@@ -1644,6 +1657,8 @@ export class WxHudOverlay extends Container {
     this.heartsSprite.destroy(options)
     this.hintIconSprite.destroy(options)
     this.assistIconSprite.destroy(options)
+    this.hintBadgeSprite.destroy(options)
+    this.assistBadgeSprite.destroy(options)
     super.destroy(options)
   }
 }

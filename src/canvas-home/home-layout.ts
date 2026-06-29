@@ -60,7 +60,11 @@ function layoutChips(
   const icon = HOME_CSS.chipIcon * s
   const innerGap = HOME_CSS.chipInnerGap * s
   const gap = HOME_CSS.chipGap * s
-  const h = HOME_CSS.chipLine * s
+  const h =
+    Math.max(
+      HOME_CSS.chipLine,
+      HOME_CSS.chipPadY * 2 + Math.max(HOME_CSS.chipIcon, HOME_CSS.chipFont),
+    ) * s
 
   const widths = CHIP_LABELS.map(
     (label) => padX * 2 + icon + innerGap + measure(label, fs),
@@ -201,6 +205,61 @@ export function computeHomeLayout(
 
 export function inRect(x: number, y: number, rect: Rect): boolean {
   return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h
+}
+
+/** 扩大触摸热区 — iOS 真机手指点击更易命中 */
+export function inflateRect(rect: Rect, pad: number): Rect {
+  if (rect.w <= 0 || rect.h <= 0) return rect
+  return { x: rect.x - pad, y: rect.y - pad, w: rect.w + pad * 2, h: rect.h + pad * 2 }
+}
+
+export function homePrimaryHitRects(layout: HomeLayout): {
+  start: Rect
+  signIn: Rect
+  leaderboard: Rect
+  settings: Rect
+} {
+  return {
+    start: { ...layout.start },
+    signIn: { ...layout.chips[0]! },
+    leaderboard: { ...layout.chips[1]! },
+    settings: { ...layout.chips[2]! },
+  }
+}
+
+export type HomeChipAction = 'signin' | 'leaderboard' | 'settings' | 'none'
+
+/** 底部 chip 行点击 — y 轴整行容错；重叠区取距 chip 中心最近者（避免右优先误判左侧签到） */
+export function hitHomeChipAction(
+  x: number,
+  y: number,
+  layout: HomeLayout,
+  slop = 12,
+): HomeChipAction {
+  const chips = layout.chips
+  if (!chips.length) return 'none'
+  const first = chips[0]!
+  const row = { x: first.x - slop, y: first.y - slop, w: 0, h: first.h + slop * 2 }
+  const last = chips[chips.length - 1]!
+  row.w = last.x + last.w + slop - row.x
+  if (!inRect(x, y, row)) return 'none'
+
+  let bestIdx = -1
+  let bestDist = Infinity
+  for (let i = 0; i < chips.length; i++) {
+    const chip = chips[i]!
+    if (x < chip.x - slop || x > chip.x + chip.w + slop) continue
+    const cx = chip.x + chip.w / 2
+    const dist = Math.abs(x - cx)
+    if (dist < bestDist) {
+      bestDist = dist
+      bestIdx = i
+    }
+  }
+  if (bestIdx === 0) return 'signin'
+  if (bestIdx === 1) return 'leaderboard'
+  if (bestIdx === 2) return 'settings'
+  return 'none'
 }
 
 export function signInChipRect(chips: Rect[]): Rect {

@@ -4,7 +4,7 @@ import { LevelTimer, LEVEL_TIME_MS, levelTimeLimitMs } from '@/game-core/level-t
 import { SnakeSession } from '@/game-core/snake-session'
 import type { SnakeRenderer } from '@/renderer/SnakeRenderer'
 import { getPlatform } from '@/platform'
-import type { ShareForHintPayload } from '@/platform/types'
+import type { ShareForHintPayload, ShareRewardType } from '@/platform/types'
 import { playSound, resumeAudio } from '@/utils/sound'
 import { triggerBlockedFeedback } from '@/utils/feedback'
 import { SHARE_ASSIST, SHARE_HINT, SHARE_LIFE, SHARE_LIMIT_TOAST, SHARE_TIME, SHARE_TIME_BONUS_MS } from '@/game/game-ui-content'
@@ -334,7 +334,7 @@ export class GameController {
       this.levelTimer.stop()
       return
     }
-    if (this.overlay === 'pause') {
+    if (this.overlay === 'pause' || this.overlay === 'tutorial') {
       this.levelTimer.pause()
       return
     }
@@ -427,6 +427,7 @@ export class GameController {
         this.showShareHintToast(SHARE_LIMIT_TOAST)
         return
       }
+      if (!this.recordShareRewardOrLimit('assist')) return
       this.session.grantShareAssist()
       this.persistConsumables()
       playSound('complete')
@@ -438,7 +439,14 @@ export class GameController {
   }
 
   canShareForAssist(): boolean {
-    return typeof getPlatform().shareForHint === 'function'
+    return (
+      typeof getPlatform().shareForHint === 'function' &&
+      this.progress.canDailyShareForReward('assist')
+    )
+  }
+
+  dailyShareRemaining(type: ShareRewardType): number {
+    return this.progress.getDailyShareRemaining(type)
   }
 
   private async handleHintAsync(): Promise<void> {
@@ -494,6 +502,7 @@ export class GameController {
         this.showShareHintToast(SHARE_LIMIT_TOAST)
         return
       }
+      if (!this.recordShareRewardOrLimit('hint')) return
       this.session.grantShareHint()
       this.persistConsumables()
       playSound('complete')
@@ -505,7 +514,10 @@ export class GameController {
   }
 
   canShareForHint(): boolean {
-    return typeof getPlatform().shareForHint === 'function'
+    return (
+      typeof getPlatform().shareForHint === 'function' &&
+      this.progress.canDailyShareForReward('hint')
+    )
   }
 
   canShareForTime(): boolean {
@@ -513,12 +525,15 @@ export class GameController {
       this.overlay === 'failed' &&
       this.failReason === 'time' &&
       !!this.session?.canShareForTime() &&
+      this.progress.canDailyShareForReward('time') &&
       typeof getPlatform().shareForHint === 'function'
     )
   }
 
   shareTimeRemaining(): number {
-    return this.session?.shareTimeRemaining() ?? 0
+    const sessionRemaining = this.session?.shareTimeRemaining() ?? 0
+    const dailyRemaining = this.progress.getDailyShareRemaining('time')
+    return Math.min(sessionRemaining, dailyRemaining)
   }
 
   canShareForLife(): boolean {
@@ -526,12 +541,15 @@ export class GameController {
       this.overlay === 'failed' &&
       this.failReason === 'lives' &&
       !!this.session?.canShareForLife() &&
+      this.progress.canDailyShareForReward('life') &&
       typeof getPlatform().shareForHint === 'function'
     )
   }
 
   shareLifeRemaining(): number {
-    return this.session?.shareLifeRemaining() ?? 0
+    const sessionRemaining = this.session?.shareLifeRemaining() ?? 0
+    const dailyRemaining = this.progress.getDailyShareRemaining('life')
+    return Math.min(sessionRemaining, dailyRemaining)
   }
 
   handleShareForLife(): void {
@@ -552,6 +570,7 @@ export class GameController {
         this.showShareHintToast(SHARE_LIMIT_TOAST)
         return
       }
+      if (!this.recordShareRewardOrLimit('life')) return
       if (!this.session.grantShareLife()) return
 
       this.failReason = null
@@ -586,6 +605,7 @@ export class GameController {
         this.showShareHintToast(SHARE_LIMIT_TOAST)
         return
       }
+      if (!this.recordShareRewardOrLimit('time')) return
       if (!this.session.grantShareTime()) return
 
       this.levelTimer.addTime(SHARE_TIME_BONUS_MS)
@@ -613,6 +633,15 @@ export class GameController {
   private withShareImage(payload: ShareForHintPayload): ShareForHintPayload {
     if (!this.hooks.captureShareImage) return payload
     return { ...payload, getShareImage: this.hooks.captureShareImage }
+  }
+
+  private recordShareRewardOrLimit(type: ShareRewardType): boolean {
+    const result = this.progress.recordDailyShareReward(type)
+    if (!result.ok) {
+      this.showShareHintToast(SHARE_LIMIT_TOAST)
+      return false
+    }
+    return true
   }
 
   private showShareHintToast(message: string): void {

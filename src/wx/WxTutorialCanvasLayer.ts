@@ -15,7 +15,7 @@ import {
 } from '@/wx/wx-canvas-bake'
 import { getWxSharedOffscreenCanvas, getWxCanvas2dContext } from '@/wx/canvas'
 import { wxHomeAnimFrame } from '@/wx/wx-home-anim'
-import { WX_THEME_INDEX } from '@/wx/wx-theme'
+import { getWxThemeIndex } from '@/wx/wx-theme'
 
 /** 微信新手引导 — Canvas 绘制 + Image 烘焙 */
 export class WxTutorialCanvasLayer extends Sprite {
@@ -23,12 +23,19 @@ export class WxTutorialCanvasLayer extends Sprite {
   private cacheKey = ''
   private lastHits: TutorialHitRects | null = null
   private baking: Promise<void> | null = null
+  private bakeGeneration = 0
   private pending: {
     screenW: number
     screenH: number
     safeBottom: number
     step: number
     t: number
+  } | null = null
+  private lastStaticParams: {
+    screenW: number
+    screenH: number
+    safeBottom: number
+    step: number
   } | null = null
 
   onTextureReady: (() => void) | null = null
@@ -61,12 +68,20 @@ export class WxTutorialCanvasLayer extends Sprite {
   }
 
   invalidateBakedTexture(): void {
+    this.bakeGeneration++
+    this.pending = null
     this.cacheKey = ''
     invalidateWxCanvasBake(this, this.bakeState)
   }
 
   requestTextureRefresh(): void {
+    this.bakeGeneration++
+    this.pending = null
     this.cacheKey = ''
+    if (this.lastStaticParams) {
+      const { screenW, screenH, safeBottom, step } = this.lastStaticParams
+      this.refresh(screenW, screenH, safeBottom, step)
+    }
   }
 
   private scheduleBake(
@@ -81,19 +96,32 @@ export class WxTutorialCanvasLayer extends Sprite {
       this.visible = false
       return null
     }
-    this.visible = true
     this.width = screenW
     this.height = screenH
+    if (!animated) {
+      this.lastStaticParams = { screenW, screenH, safeBottom, step }
+    }
 
-    const base = `${screenW}|${screenH}|${safeBottom}|${step}|t${WX_THEME_INDEX}`
+    const base = `${screenW}|${screenH}|${safeBottom}|${step}|t${getWxThemeIndex()}`
     const key = animated ? `${base}|f${wxHomeAnimFrame(t)}` : base
     if (key !== this.cacheKey) {
-      this.cacheKey = key
       if (animated && isWxMiniGame()) {
+        if (isWxCanvasBakeBusy()) {
+          this.visible = this.texture !== Texture.EMPTY
+          return this.lastHits
+        }
+        this.cacheKey = key
         return this.bakeAnimatedSync(screenW, screenH, safeBottom, step, t)
       }
+      this.cacheKey = key
+      if (this.texture !== Texture.EMPTY) {
+        invalidateWxCanvasBake(this, this.bakeState)
+      }
       this.pending = { screenW, screenH, safeBottom, step, t }
+      this.visible = false
       void this.ensureBaked()
+    } else {
+      this.visible = true
     }
     return this.lastHits
   }
@@ -126,12 +154,13 @@ export class WxTutorialCanvasLayer extends Sprite {
       const { hits } = drawTutorialVisual(ctx, screenW, screenH, safeBottom, step, t)
       this.lastHits = hits
 
-      bakeCanvasToCanvasSprite(this, this.bakeState, canvas)
-      this.width = screenW
-      this.height = screenH
+      bakeCanvasToCanvasSprite(this, this.bakeState, canvas, screenW, screenH)
     })
 
-    if (ok) this.onTextureReady?.()
+    if (ok) {
+      this.visible = true
+      this.onTextureReady?.()
+    }
     return this.lastHits
   }
 
@@ -148,6 +177,7 @@ export class WxTutorialCanvasLayer extends Sprite {
     const p = this.pending
     if (!p) return
     this.pending = null
+    const gen = this.bakeGeneration
 
     const dpr = Math.min(getPlatform().getDevicePixelRatio(), 2)
     const pixelW = Math.max(1, Math.ceil(p.screenW * dpr))
@@ -160,6 +190,7 @@ export class WxTutorialCanvasLayer extends Sprite {
 
     const ctx = getWxCanvas2dContext(canvas)
     if (!ctx) return
+    if (gen !== this.bakeGeneration) return
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, p.screenW, p.screenH)
@@ -168,8 +199,10 @@ export class WxTutorialCanvasLayer extends Sprite {
     this.lastHits = hits
 
     await bakeCanvasToImageSprite(this, this.bakeState, canvas, dpr, p.screenW, p.screenH)
+    if (gen !== this.bakeGeneration) return
     this.width = p.screenW
     this.height = p.screenH
+    this.visible = true
     this.onTextureReady?.()
   }
 

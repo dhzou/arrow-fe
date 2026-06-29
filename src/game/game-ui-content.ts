@@ -218,13 +218,16 @@ export const MAX_SHARE_TIME_PER_LEVEL = 3
 /** 每关最多分享加命次数 */
 export const MAX_SHARE_LIFE_PER_LEVEL = 3
 
-export const SHARE_LIMIT_TOAST = '今日分享奖励已达上限（3 次）'
+/** 每种道具每日分享领取上限 */
+export const MAX_SHARE_PER_DAY = 5
+
+export const SHARE_LIMIT_TOAST = `今日分享奖励已达上限（${MAX_SHARE_PER_DAY} 次）`
 
 export const SHARE_HINT = {
   title: MINIGAME_STORE.shareTitle,
   text: MINIGAME_STORE.shareText,
   modalTitle: '分享得提示',
-  modalBody: '分享给好友即可获得 1 次提示（每天最多 3 次）',
+  modalBody: `分享给好友即可获得 1 次提示（每天最多 ${MAX_SHARE_PER_DAY} 次）`,
   confirmText: '去分享',
   cancelText: '取消',
   copiedToast: '链接已复制，分享给好友即可获得 1 次提示',
@@ -236,7 +239,7 @@ export const SHARE_ASSIST = {
   title: MINIGAME_STORE.shareTitle,
   text: MINIGAME_STORE.shareText,
   modalTitle: '分享得辅助',
-  modalBody: '分享给好友即可获得 1 次辅助（每天最多 3 次）',
+  modalBody: `分享给好友即可获得 1 次辅助（每天最多 ${MAX_SHARE_PER_DAY} 次）`,
   confirmText: '去分享',
   cancelText: '取消',
   copiedToast: '链接已复制，分享给好友即可获得 1 次辅助',
@@ -248,7 +251,7 @@ export const SHARE_TIME = {
   title: MINIGAME_STORE.shareTitle,
   text: MINIGAME_STORE.shareText,
   modalTitle: '分享续时',
-  modalBody: `${SHARE_TIME_DESCRIPTION}每天最多 3 次。`,
+  modalBody: `${SHARE_TIME_DESCRIPTION}每天最多 ${MAX_SHARE_PER_DAY} 次。`,
   confirmText: '去分享',
   cancelText: '取消',
   copiedToast: `链接已复制，${SHARE_TIME_DESCRIPTION}`,
@@ -260,7 +263,7 @@ export const SHARE_LIFE = {
   title: MINIGAME_STORE.shareTitle,
   text: MINIGAME_STORE.shareText,
   modalTitle: '分享加命',
-  modalBody: `${SHARE_LIFE_DESCRIPTION}每天最多 3 次。`,
+  modalBody: `${SHARE_LIFE_DESCRIPTION}每天最多 ${MAX_SHARE_PER_DAY} 次。`,
   confirmText: '分享加命',
   cancelText: '取消',
   copiedToast: `链接已复制，${SHARE_LIFE_DESCRIPTION}`,

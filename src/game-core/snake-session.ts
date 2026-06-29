@@ -28,7 +28,8 @@ export class SnakeSession {
 
   static async create(levelNumber: number): Promise<SnakeSession> {
     const level = await getSnakeLevelOrVariantAsync(levelNumber)
-    preloadSnakeLevel(levelNumber + 1)
+    const nextLevel = levelNumber + 1
+    queueMicrotask(() => preloadSnakeLevel(nextLevel))
     return new SnakeSession(level)
   }
 

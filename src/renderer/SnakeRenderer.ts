@@ -8,10 +8,11 @@ import {
   findSnakeNearLocalPoint,
   gridSlideOccupancy,
 } from '@/game-core/snake-grid'
-import { isPathStyleLevel, isCompactPathLevel } from '@/game-core/snake-difficulty'
+import { isPathStyleLevel, usesCompactPathVisual } from '@/game-core/snake-difficulty'
 import { getBoardTheme, boardThemeFrameBg, boardThemeHasChromeSplit, DEFAULT_BOARD_THEME_INDEX, normalizeBoardThemeIndex } from '@/game/board-theme'
 import { getPlatform, isWxMiniGame } from '@/platform'
-import { resolveWxPixiInit } from '@/wx/canvas'
+import { needsWxIosWebglDirectRender, resolveWxPixiInit } from '@/wx/canvas'
+import { setWxGameBoardAnimActive } from '@/wx/wx-canvas-bake'
 import { wxCanvasCropToTempFile, wxCanvasCropToTempFileSync } from '@/wx/wx-canvas-capture'
 import { GAME_HUD, l1PlateInsets, pathBottomHudHeight } from '@/game/game-ui-content'
 import { snapBoardZoom, touchSpan, zoomFromPinchSpan } from '@/game/board-gesture'
@@ -498,8 +499,27 @@ export class SnakeRenderer {
     this.particlesGfx = null
   }
 
-  forceRender(): void {
+  forceRender(immediate = false): void {
+    if ((immediate || this.shouldWxImmediateRender()) && this.app) {
+      if (this.renderFlushRaf) {
+        this.cancelFrame(this.renderFlushRaf)
+        this.renderFlushRaf = 0
+      }
+      this.app.render()
+      return
+    }
     this.scheduleAppRender()
+  }
+
+  /** 棋盘滑出/进关/格点等动画进行中（供 WxGameApp 跳过 HUD 烘焙与合帧 render） */
+  isBoardAnimating(): boolean {
+    return (
+      this.moveSlides.size > 0 ||
+      this.blockedHighlightId !== null ||
+      this.levelEntranceActive ||
+      this.gridRevealRaf !== 0 ||
+      this.hintPreviewRaf !== 0
+    )
   }
 
   /** 从后台恢复时重启 ticker 并重绘一帧 */
@@ -640,6 +660,11 @@ export class SnakeRenderer {
     getPlatform().cancelAnimationFrame(id)
   }
 
+  /** 微信 iOS rAF 回调时间戳与 performance.now 不同源，动画须统一用 performance.now */
+  private frameNow(): number {
+    return performance.now()
+  }
+
   private scheduleTimeout(cb: () => void, ms: number): number {
     return getPlatform().setTimeout(cb, ms)
   }
@@ -749,7 +774,7 @@ export class SnakeRenderer {
     const metrics = getPlatform().getScreenMetrics()
     const safeTop = metrics.safeAreaTop
     const safeBottom = metrics.safeAreaBottom
-    if (isCompactPathLevel(this.levelNumber)) {
+    if (usesCompactPathVisual(this.levelNumber)) {
       return l1PlateInsets(safeTop, safeBottom)
     }
     if (isPathStyleLevel(this.levelNumber)) {
@@ -912,6 +937,7 @@ export class SnakeRenderer {
       this.levelEntranceStartMs = performance.now()
       this.levelEntranceLastRenderMs = 0
       this.levelEntranceOnComplete = () => resolve()
+      this.syncWxGameplayRenderState()
 
       this.roadsStatic.clear()
       this.headsStatic?.removeChildren()
@@ -969,6 +995,23 @@ export class SnakeRenderer {
 
   private syncAnimatingFlag(): void {
     this.animating = this.moveSlides.size > 0 || this.blockedHighlightId !== null
+    this.syncWxGameplayRenderState()
+  }
+
+  private shouldWxImmediateRender(): boolean {
+    return isWxMiniGame() && this.isBoardAnimating()
+  }
+
+  /** 微信 iOS WebGL：动画期间保持 ticker，并推迟 HUD 离屏烘焙 */
+  private syncWxGameplayRenderState(): void {
+    if (!isWxMiniGame()) return
+    setWxGameBoardAnimActive(this.isBoardAnimating())
+    if (!this.app) return
+    if (needsWxIosWebglDirectRender() && this.isBoardAnimating()) {
+      this.app.ticker.start()
+    } else if (!this.homeFrameListener) {
+      this.app.ticker.stop()
+    }
   }
 
   private clearMoveSlides(): void {
@@ -1027,8 +1070,8 @@ export class SnakeRenderer {
 
   private ensureMoveSlideLoop(): void {
     if (this.moveSlideRaf) return
-    const tick = (now: number) => {
-      this.advanceMoveSlides(now)
+    const tick = () => {
+      this.advanceMoveSlides(this.frameNow())
       if (this.moveSlides.size === 0) {
         this.moveSlideRaf = 0
         return
@@ -1161,9 +1204,9 @@ export class SnakeRenderer {
     const duration = variant === 'blocked' ? 380 : 320
     const maxRipple = cellSize * 0.72
 
-    const tick = (now: number) => {
+    const tick = () => {
       if (!this.particlesGfx || !this.app) return
-      const t = Math.min(1, (now - start) / duration)
+      const t = Math.min(1, (this.frameNow() - start) / duration)
       const ease = 1 - t * t
 
       this.particlesGfx.clear()
@@ -1296,6 +1339,7 @@ export class SnakeRenderer {
     this.hintPreviewCancelled = true
     this.cancelFrame(this.hintPreviewRaf)
     this.hintPreviewRaf = 0
+    this.syncWxGameplayRenderState()
   }
 
   /** 提示：滑出 2 格 → 退回 2 格，重复 hintPreviewCycles 次 */
@@ -1310,10 +1354,10 @@ export class SnakeRenderer {
     const totalMs = totalTravel * this.hintSlideStepMs
     const animStart = performance.now()
 
-    const tick = (now: number) => {
+    const tick = () => {
       if (this.hintPreviewCancelled || !this.activeHintSnakeId) return
 
-      const progress = Math.min(1, (now - animStart) / totalMs)
+      const progress = Math.min(1, (this.frameNow() - animStart) / totalMs)
       this.resetActiveOffset()
       this.clearActiveLayer()
       this.paintHintPingPongAtProgress(frames, progress, totalTravel, cycleTravel, segmentCount, style)
@@ -1327,6 +1371,7 @@ export class SnakeRenderer {
       this.restoreHintSnakeAtOrigin()
     }
 
+    this.syncWxGameplayRenderState()
     this.hintPreviewRaf = this.scheduleFrame(tick)
   }
 
@@ -1504,11 +1549,11 @@ export class SnakeRenderer {
     paintAtElapsed(0)
     this.commitRender()
 
-    const tick = (now: number) => {
+    const tick = () => {
       if (cancelled || finished) return
 
       try {
-        const elapsed = now - animStart
+        const elapsed = this.frameNow() - animStart
         paintAtElapsed(elapsed)
         this.commitRender()
 
@@ -1599,9 +1644,9 @@ export class SnakeRenderer {
       this.commitRender()
 
       const start = performance.now()
-      const tick = (now: number) => {
+      const tick = () => {
         if (cancelled) return
-        const t = this.easeStep(Math.min(1, (now - start) / this.slideStepIntervalMs()))
+        const t = this.easeStep(Math.min(1, (this.frameNow() - start) / this.slideStepIntervalMs()))
         this.paintSlideStep(from, to, t, style, 'reverse')
         this.refreshAssistGridForSlide(staticSnakes, from, to, t, 'reverse', gridWidth, gridHeight)
         this.commitRender()
@@ -1636,6 +1681,18 @@ export class SnakeRenderer {
   }
 
   private commitRender(): void {
+    if (isWxMiniGame()) {
+      this.syncWxGameplayRenderState()
+    }
+    // 微信对局动画：逐帧直绘，避免 rAF 合帧导致 iOS WebGL 不上屏
+    if (isWxMiniGame() && this.app && this.isBoardAnimating()) {
+      if (this.renderFlushRaf) {
+        this.cancelFrame(this.renderFlushRaf)
+        this.renderFlushRaf = 0
+      }
+      this.app.render()
+      return
+    }
     this.scheduleAppRender()
   }
 
@@ -1726,6 +1783,7 @@ export class SnakeRenderer {
     this.levelEntranceOrder = this.sortSnakeEntranceOrder(snakes)
     this.levelEntranceBatchIndex = 0
     this.levelEntranceOnComplete = () => resolve()
+    this.syncWxGameplayRenderState()
     this.mountEntranceDoneGfx()
     this.roadsStatic!.clear()
     this.headsStatic?.removeChildren()
@@ -1766,6 +1824,7 @@ export class SnakeRenderer {
   private finishLevelEntrance(): void {
     const onComplete = this.levelEntranceOnComplete
     this.stopLevelEntrance()
+    this.syncWxGameplayRenderState()
     this.drawStaticSnakes(this.lastSnakes)
     this.staticSnakesDrawSig = this.staticSnakesSignature(this.lastSnakes)
     this.commitRender()
@@ -2085,26 +2144,26 @@ export class SnakeRenderer {
     const amp = this.impactShakeAmplitude()
     let rafId = 0
 
-    const tick = (now: number) => {
-      const t = Math.min(1, (now - start) / durationMs)
+    const tick = () => {
+      const t = Math.min(1, (this.frameNow() - start) / durationMs)
       const shake = Math.sin(t * Math.PI * 4) * (1 - t) * amp
       this.activeLayer!.x = shake
       this.activeLayer!.y = shake * 0.3
       this.commitRender()
 
       if (t < 1) {
-        rafId = requestAnimationFrame(tick)
+        rafId = this.scheduleFrame(tick)
       } else {
         this.resetActiveOffset()
         onComplete()
       }
     }
 
-    rafId = requestAnimationFrame(tick)
+    rafId = this.scheduleFrame(tick)
     const prevCancel = this.cancelAnimation
     this.cancelAnimation = () => {
       prevCancel?.()
-      cancelAnimationFrame(rafId)
+      this.cancelFrame(rafId)
     }
   }
 
@@ -2120,7 +2179,7 @@ export class SnakeRenderer {
 
     if (isPathStyleLevel(this.levelNumber)) {
       const chromeSplit = boardThemeHasChromeSplit(theme)
-      if (isCompactPathLevel(this.levelNumber) && chromeSplit && frameBg !== boardBg) {
+      if (usesCompactPathVisual(this.levelNumber) && chromeSplit && frameBg !== boardBg) {
         const metrics = getPlatform().getScreenMetrics()
         const { top, bottom } = l1PlateInsets(metrics.safeAreaTop, metrics.safeAreaBottom)
         if (top > 0) this.stageDecor.rect(0, 0, w, top).fill(frameBg)
@@ -2204,6 +2263,7 @@ export class SnakeRenderer {
       this.cancelFrame(this.gridRevealRaf)
       this.gridRevealRaf = 0
     }
+    this.syncWxGameplayRenderState()
   }
 
   /** 格子点显现：ease-out 淡入 */
@@ -2230,7 +2290,7 @@ export class SnakeRenderer {
   private syncGridRevealOccupancy(occupied: Set<string>, gridWidth: number, gridHeight: number): void {
     const now = performance.now()
     let hasNew = false
-    const l1Tutorial = isCompactPathLevel(this.levelNumber)
+    const l1Tutorial = usesCompactPathVisual(this.levelNumber)
 
     for (const key of this.revealedGridCells) {
       if (occupied.has(key)) this.revealedGridCells.delete(key)
@@ -2293,6 +2353,7 @@ export class SnakeRenderer {
         this.gridRevealRaf = 0
       }
     }
+    this.syncWxGameplayRenderState()
     this.gridRevealRaf = this.scheduleFrame(tick)
   }
 
@@ -2359,7 +2420,7 @@ export class SnakeRenderer {
     this.finalizeCompletedReveals(now)
     const { cellPitch } = this.layout
     const pathStyle = isPathStyleLevel(this.levelNumber)
-    const l1Tutorial = isCompactPathLevel(this.levelNumber)
+    const l1Tutorial = usesCompactPathVisual(this.levelNumber)
     const theme = getBoardTheme(this.boardThemeIndex)
 
     if (l1Tutorial && this.assistActive) {

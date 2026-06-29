@@ -3,11 +3,13 @@ import { drawPreviewPaths2d } from '@/canvas-home/preview-path-draw'
 import { getPlatform, isWxMiniGame } from '@/platform'
 import { wxHomePreviewFrame } from '@/wx/wx-home-anim'
 import {
-  bakeCanvasToImageSprite,
+  applyWxCanvasImageBakeCapture,
   destroyWxCanvasBakeState,
   invalidateWxCanvasBake,
+  snapshotWxCanvasForImageBake,
   withWxCanvasBakeLock,
   type WxCanvasBakeState,
+  type WxCanvasImageBakeCapture,
 } from './wx-canvas-bake'
 import { getWxCanvas2dContext, getWxSharedOffscreenCanvas } from './canvas'
 
@@ -53,7 +55,7 @@ export class WxCanvasPreview extends Sprite {
     if (!p) return
     this.pending = null
 
-    await withWxCanvasBakeLock(async () => {
+    const capture = await withWxCanvasBakeLock(async (): Promise<WxCanvasImageBakeCapture | null> => {
       const dpr = isWxMiniGame()
         ? Math.min(getPlatform().getDevicePixelRatio(), 3)
         : Math.min(getPlatform().getDevicePixelRatio(), 2)
@@ -67,17 +69,19 @@ export class WxCanvasPreview extends Sprite {
       }
 
       const ctx = getWxCanvas2dContext(canvas)
-      if (!ctx) return
+      if (!ctx) return null
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, p.w, p.h)
       drawPreviewPaths2d(ctx, 0, 0, p.w, p.h, p.t)
 
-      await bakeCanvasToImageSprite(this, this.bakeState, canvas, dpr, p.w, p.h)
+      return snapshotWxCanvasForImageBake(canvas, dpr, p.w, p.h)
+    })
+    if (await applyWxCanvasImageBakeCapture(this, this.bakeState, capture)) {
       this.width = p.w
       this.height = p.h
       this.onTextureReady?.()
-    })
+    }
   }
 
   invalidateBakedTexture(): void {

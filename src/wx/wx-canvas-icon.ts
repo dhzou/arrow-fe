@@ -1,14 +1,17 @@
 import { Sprite, Texture } from 'pixi.js'
-import { drawGameIcon2d } from '@/canvas-home/canvas2d-draw'
-import { HUD_HEART_ALIVE, HUD_HEART_DEAD, HUD_HEART_DEAD_ALPHA } from './wx-draw'
+import { drawGameIcon2d, drawNumericBadge2d } from '@/canvas-home/canvas2d-draw'
+import { HUD_HEART_ALIVE, HUD_HEART_DEAD, HUD_HEART_DEAD_ALPHA, numericBadgeWidth } from './wx-draw'
+import { getWxThemeIndex } from './wx-theme'
 import { getPlatform } from '@/platform'
 import type { WxGameIconName } from './wx-game-icons'
 import {
-  bakeCanvasToImageSprite,
+  applyWxCanvasImageBakeCapture,
   destroyWxCanvasBakeState,
   invalidateWxCanvasBake,
+  snapshotWxCanvasForImageBake,
   withWxCanvasBakeLock,
   type WxCanvasBakeState,
+  type WxCanvasImageBakeCapture,
 } from './wx-canvas-bake'
 import { getWxCanvas2dContext, getWxSharedOffscreenCanvas } from './canvas'
 
@@ -75,7 +78,7 @@ export class WxCanvasIcon extends Sprite {
     const logicalH = size + pad * 2
 
     try {
-      await withWxCanvasBakeLock(async () => {
+      const capture = await withWxCanvasBakeLock(async (): Promise<WxCanvasImageBakeCapture | null> => {
         const dpr = Math.min(getPlatform().getDevicePixelRatio(), 3)
         const pixelW = Math.max(1, Math.ceil(logicalW * dpr))
         const pixelH = Math.max(1, Math.ceil(logicalH * dpr))
@@ -84,19 +87,112 @@ export class WxCanvasIcon extends Sprite {
         canvas.height = pixelH
 
         const ctx = getWxCanvas2dContext(canvas)
-        if (!ctx) return
+        if (!ctx) return null
 
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         ctx.clearRect(0, 0, logicalW, logicalH)
         drawGameIcon2d(ctx, name, logicalW / 2, logicalH / 2, size, color, alpha)
 
-        await bakeCanvasToImageSprite(this, this.bakeState, canvas, dpr, logicalW, logicalH)
-        if (generation === this.bakeGeneration && this.bakeVisualKey() === visualKey) {
-          this.needsBake = false
-        }
+        return snapshotWxCanvasForImageBake(canvas, dpr, logicalW, logicalH)
       })
+      await applyWxCanvasImageBakeCapture(this, this.bakeState, capture)
+      if (generation === this.bakeGeneration && this.bakeVisualKey() === visualKey) {
+        this.needsBake = false
+      }
     } catch (err) {
       console.warn('[WxCanvasIcon] bake failed:', name, err)
+    }
+  }
+
+  override destroy(options?: Parameters<Sprite['destroy']>[0]): void {
+    destroyWxCanvasBakeState(this.bakeState)
+    super.destroy(options)
+  }
+}
+
+/** HUD 数字角标 — 背景 + 文案一体烘焙，避免 Pixi fill 在 iOS 真机丢失 */
+export class WxCanvasBadge extends Sprite {
+  private label = '0'
+  private warm = false
+  private badgeW = 16
+  private readonly bakeState: WxCanvasBakeState = {}
+  private needsBake = true
+  private baking: Promise<void> | null = null
+  private bakeGeneration = 0
+
+  constructor() {
+    super(Texture.EMPTY)
+    this.anchor.set(0.5)
+  }
+
+  private bakeVisualKey(): string {
+    return `${this.label}|${this.warm}|${this.badgeW}|${getWxThemeIndex()}`
+  }
+
+  configure(label: string, warm: boolean): void {
+    const w = numericBadgeWidth(label)
+    if (this.label === label && this.warm === warm && this.badgeW === w) return
+    this.label = label
+    this.warm = warm
+    this.badgeW = w
+    this.needsBake = true
+    this.bakeGeneration++
+  }
+
+  async ensureBaked(): Promise<void> {
+    while (this.needsBake) {
+      if (this.baking) {
+        await this.baking
+        continue
+      }
+      this.baking = this.doBake().finally(() => {
+        this.baking = null
+      })
+      await this.baking
+    }
+  }
+
+  requestTextureRefresh(): void {
+    this.needsBake = true
+    this.bakeGeneration++
+    invalidateWxCanvasBake(this, this.bakeState)
+  }
+
+  private async doBake(): Promise<void> {
+    const generation = this.bakeGeneration
+    const visualKey = this.bakeVisualKey()
+    const label = this.label
+    const warm = this.warm
+    const w = this.badgeW
+    const h = 16
+    const pad = 2
+    const logicalW = w + pad * 2
+    const logicalH = h + pad * 2
+
+    try {
+      const capture = await withWxCanvasBakeLock(async (): Promise<WxCanvasImageBakeCapture | null> => {
+        const dpr = Math.min(getPlatform().getDevicePixelRatio(), 3)
+        const pixelW = Math.max(1, Math.ceil(logicalW * dpr))
+        const pixelH = Math.max(1, Math.ceil(logicalH * dpr))
+        const canvas = getWxSharedOffscreenCanvas()
+        canvas.width = pixelW
+        canvas.height = pixelH
+
+        const ctx = getWxCanvas2dContext(canvas)
+        if (!ctx) return null
+
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        ctx.clearRect(0, 0, logicalW, logicalH)
+        drawNumericBadge2d(ctx, pad, pad, w, h, label, warm)
+
+        return snapshotWxCanvasForImageBake(canvas, dpr, logicalW, logicalH)
+      })
+      await applyWxCanvasImageBakeCapture(this, this.bakeState, capture)
+      if (generation === this.bakeGeneration && this.bakeVisualKey() === visualKey) {
+        this.needsBake = false
+      }
+    } catch (err) {
+      console.warn('[WxCanvasBadge] bake failed:', label, err)
     }
   }
 
@@ -169,7 +265,7 @@ export class WxCanvasHearts extends Sprite {
     const logicalH = heartSize + pad * 2
 
     try {
-      await withWxCanvasBakeLock(async () => {
+      const capture = await withWxCanvasBakeLock(async (): Promise<WxCanvasImageBakeCapture | null> => {
         const dpr = Math.min(getPlatform().getDevicePixelRatio(), 3)
         const pixelW = Math.max(1, Math.ceil(logicalW * dpr))
         const pixelH = Math.max(1, Math.ceil(logicalH * dpr))
@@ -178,7 +274,7 @@ export class WxCanvasHearts extends Sprite {
         canvas.height = pixelH
 
         const ctx = getWxCanvas2dContext(canvas)
-        if (!ctx) return
+        if (!ctx) return null
 
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         ctx.clearRect(0, 0, logicalW, logicalH)
@@ -198,15 +294,16 @@ export class WxCanvasHearts extends Sprite {
           )
         }
 
-        await bakeCanvasToImageSprite(this, this.bakeState, canvas, dpr, logicalW, logicalH)
-        if (
-          this.layout.heartSize === heartSize &&
-          this.layout.centerGap === centerGap &&
-          this.layout.lives === lives
-        ) {
-          this.needsBake = false
-        }
+        return snapshotWxCanvasForImageBake(canvas, dpr, logicalW, logicalH)
       })
+      await applyWxCanvasImageBakeCapture(this, this.bakeState, capture)
+      if (
+        this.layout.heartSize === heartSize &&
+        this.layout.centerGap === centerGap &&
+        this.layout.lives === lives
+      ) {
+        this.needsBake = false
+      }
     } catch (err) {
       console.warn('[WxCanvasHearts] bake failed:', err)
     }

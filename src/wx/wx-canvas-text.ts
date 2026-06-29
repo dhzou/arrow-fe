@@ -1,10 +1,15 @@
 import { Sprite, Texture } from 'pixi.js'
+import type { TextMeasure } from '@/canvas-home/home-css'
+import { estimateTextWidth } from '@/canvas-home/home-css'
 import { getPlatform } from '@/platform'
 import {
-  bakeCanvasToImageSprite,
+  applyWxCanvasImageBakeCapture,
   destroyWxCanvasBakeState,
+  isWxGameBoardAnimActive,
+  snapshotWxCanvasForImageBake,
   withWxCanvasBakeLock,
   type WxCanvasBakeState,
+  type WxCanvasImageBakeCapture,
 } from './wx-canvas-bake'
 import { getWxSharedOffscreenCanvas, getWxCanvas2dContext } from './canvas'
 
@@ -110,6 +115,7 @@ export class WxCanvasText extends Sprite {
 
   async ensureBaked(): Promise<void> {
     if (!this.needsBake && this.bakeState.texture) return
+    if (isWxGameBoardAnimActive()) return
     if (this.baking) return this.baking
     this.baking = this.doBake().finally(() => {
       this.baking = null
@@ -121,56 +127,58 @@ export class WxCanvasText extends Sprite {
     const bakeText = this.content
     const bakeStyle = { ...this.style }
     try {
-      await withWxCanvasBakeLock(async () => {
-      const dpr = Math.min(getPlatform().getDevicePixelRatio(), 3)
-      const family = wxCanvasFontFamily()
-      const weight = bakeStyle.fontWeight ?? '400'
-      const fontSize = bakeStyle.fontSize
-      const align = bakeStyle.align ?? 'center'
+      const capture = await withWxCanvasBakeLock(async (): Promise<WxCanvasImageBakeCapture | null> => {
+        const dpr = Math.min(getPlatform().getDevicePixelRatio(), 3)
+        const family = wxCanvasFontFamily()
+        const weight = bakeStyle.fontWeight ?? '400'
+        const fontSize = bakeStyle.fontSize
+        const align = bakeStyle.align ?? 'center'
 
-      const canvas = getWxSharedOffscreenCanvas()
-      const logicalFont = `${weight} ${fontSize}px ${family}`
+        const canvas = getWxSharedOffscreenCanvas()
+        const logicalFont = `${weight} ${fontSize}px ${family}`
 
-      // 重置共享 canvas，避免上一帧 transform / 尺寸污染度量
-      canvas.width = 1
-      canvas.height = 1
-      const probe = getWxCanvas2dContext(canvas)
-      if (!probe) return
-      probe.setTransform(1, 0, 0, 1, 0, 0)
-      probe.font = logicalFont
-      const metrics = probe.measureText(bakeText)
-      const logicalW = Math.ceil(metrics.width) + this.padX * 2
-      const logicalH = wxCanvasTextBlockHeight(fontSize, this.padY)
+        // 重置共享 canvas，避免上一帧 transform / 尺寸污染度量
+        canvas.width = 1
+        canvas.height = 1
+        const probe = getWxCanvas2dContext(canvas)
+        if (!probe) return null
+        probe.setTransform(1, 0, 0, 1, 0, 0)
+        probe.font = logicalFont
+        const metrics = probe.measureText(bakeText)
+        const logicalW = Math.ceil(metrics.width) + this.padX * 2
+        const logicalH = wxCanvasTextBlockHeight(fontSize, this.padY)
 
-      const pixelW = Math.max(1, Math.ceil(logicalW * dpr))
-      const pixelH = Math.max(1, Math.ceil(logicalH * dpr))
-      canvas.width = pixelW
-      canvas.height = pixelH
+        const pixelW = Math.max(1, Math.ceil(logicalW * dpr))
+        const pixelH = Math.max(1, Math.ceil(logicalH * dpr))
+        canvas.width = pixelW
+        canvas.height = pixelH
 
-      const ctx = getWxCanvas2dContext(canvas)
-      if (!ctx) return
+        const ctx = getWxCanvas2dContext(canvas)
+        if (!ctx) return null
 
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      ctx.clearRect(0, 0, logicalW, logicalH)
-      ctx.imageSmoothingEnabled = false
-      ctx.font = logicalFont
-      if (bakeStyle.gradient) {
-        const grad = ctx.createLinearGradient(0, 0, logicalW, 0)
-        grad.addColorStop(0, hexColor(bakeStyle.gradient[0]))
-        grad.addColorStop(1, hexColor(bakeStyle.gradient[1]))
-        ctx.fillStyle = grad
-      } else {
-        const fill = bakeStyle.fill ?? '#ffffff'
-        ctx.fillStyle = fill.startsWith('#') ? fill : hexColor(Number(fill))
-      }
-      ctx.textBaseline = 'middle'
-      ctx.textAlign = align
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        ctx.clearRect(0, 0, logicalW, logicalH)
+        ctx.imageSmoothingEnabled = false
+        ctx.font = logicalFont
+        if (bakeStyle.gradient) {
+          const grad = ctx.createLinearGradient(0, 0, logicalW, 0)
+          grad.addColorStop(0, hexColor(bakeStyle.gradient[0]))
+          grad.addColorStop(1, hexColor(bakeStyle.gradient[1]))
+          ctx.fillStyle = grad
+        } else {
+          const fill = bakeStyle.fill ?? '#ffffff'
+          ctx.fillStyle = fill.startsWith('#') ? fill : hexColor(Number(fill))
+        }
+        ctx.textBaseline = 'middle'
+        ctx.textAlign = align
 
-      const textX =
-        align === 'left' ? this.padX : align === 'right' ? logicalW - this.padX : logicalW / 2
-      ctx.fillText(bakeText, Math.round(textX), Math.round(logicalH / 2))
+        const textX =
+          align === 'left' ? this.padX : align === 'right' ? logicalW - this.padX : logicalW / 2
+        ctx.fillText(bakeText, Math.round(textX), Math.round(logicalH / 2))
 
-      await bakeCanvasToImageSprite(this, this.bakeState, canvas, dpr, logicalW, logicalH)
+        return snapshotWxCanvasForImageBake(canvas, dpr, logicalW, logicalH)
+      })
+      await applyWxCanvasImageBakeCapture(this, this.bakeState, capture)
       if (this.content === bakeText && this.style.fontSize === bakeStyle.fontSize
         && this.style.fontWeight === bakeStyle.fontWeight
         && this.style.fill === bakeStyle.fill
@@ -178,7 +186,6 @@ export class WxCanvasText extends Sprite {
         && this.style.gradient?.[1] === bakeStyle.gradient?.[1]) {
         this.needsBake = false
       }
-    })
     } catch (err) {
       console.warn('[WxCanvasText] bake failed:', this.content, err)
     }
@@ -192,6 +199,23 @@ export class WxCanvasText extends Sprite {
 
 function getFontProbeCanvas(): WechatMinigame.Canvas {
   return getWxSharedOffscreenCanvas()
+}
+
+/** 首页布局用 — 与烘焙字体一致的真实度量（失败时回退估算） */
+export function wxHomeTextMeasure(): TextMeasure {
+  return (text, fontSize, fontWeight = '400') => {
+    try {
+      const canvas = getWxSharedOffscreenCanvas()
+      const ctx = getWxCanvas2dContext(canvas)
+      if (ctx) {
+        ctx.font = `${fontWeight} ${fontSize}px ${wxCanvasFontFamily()}`
+        return ctx.measureText(text).width
+      }
+    } catch {
+      /* 分包加载前回退 */
+    }
+    return estimateTextWidth(text, fontSize)
+  }
 }
 
 export function wxTextStyle(

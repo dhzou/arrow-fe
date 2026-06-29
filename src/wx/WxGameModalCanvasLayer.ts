@@ -6,18 +6,19 @@ import {
 } from '@/canvas-home/game-modal-visual-draw'
 import { getPlatform, isWxMiniGame } from '@/platform'
 import {
+  applyWxCanvasImageBakeCapture,
   bakeCanvasToCanvasSprite,
-  bakeCanvasToImageSprite,
   destroyWxCanvasBakeState,
   invalidateWxCanvasBake,
-  isWxCanvasBakeBusy,
   runWxCanvasBakeSync,
+  snapshotWxCanvasForImageBake,
   withWxCanvasBakeLock,
   type WxCanvasBakeState,
+  type WxCanvasImageBakeCapture,
 } from '@/wx/wx-canvas-bake'
 import { getWxSharedOffscreenCanvas, getWxCanvas2dContext } from '@/wx/canvas'
 import { wxHomeAnimFrame } from '@/wx/wx-home-anim'
-import { WX_THEME_INDEX } from '@/wx/wx-theme'
+import { getWxThemeIndex } from '@/wx/wx-theme'
 
 export type GameModalPayload =
   | {
@@ -51,6 +52,11 @@ export class WxGameModalCanvasLayer extends Sprite {
     payload: GameModalPayload
     animT: number
   } | null = null
+  private lastStaticParams: {
+    screenW: number
+    screenH: number
+    payload: GameModalPayload
+  } | null = null
 
   onTextureReady: (() => void) | null = null
 
@@ -80,9 +86,15 @@ export class WxGameModalCanvasLayer extends Sprite {
     this.dismiss()
   }
 
-  /** 切前台软刷新 — 保留弹窗纹理，异步重烘焙 */
+  /** 切主题 / 切前台 — 失效缓存并按新 WX_THEME 重烘焙 */
   requestTextureRefresh(): void {
+    this.bakeGeneration++
+    this.pending = null
     this.cacheKey = ''
+    if (this.lastStaticParams) {
+      const { screenW, screenH, payload } = this.lastStaticParams
+      this.refresh(screenW, screenH, payload)
+    }
   }
 
   /** 关闭弹窗并丢弃排队/在途烘焙，防止切关后旧纹理闪现 */
@@ -113,11 +125,13 @@ export class WxGameModalCanvasLayer extends Sprite {
       this.visible = false
       return null
     }
-    this.visible = true
     this.width = screenW
     this.height = screenH
+    if (!animated) {
+      this.lastStaticParams = { screenW, screenH, payload }
+    }
 
-    const themeTag = `t${WX_THEME_INDEX}`
+    const themeTag = `t${getWxThemeIndex()}`
     const base =
       payload.kind === 'complete'
         ? `${screenW}|${screenH}|complete|${this.completeKey(payload)}|${themeTag}`
@@ -129,8 +143,14 @@ export class WxGameModalCanvasLayer extends Sprite {
       if (animated && payload.kind === 'complete' && isWxMiniGame()) {
         return this.bakeCompleteAnimatedSync(screenW, screenH, payload, animT)
       }
+      if (this.texture !== Texture.EMPTY) {
+        invalidateWxCanvasBake(this, this.bakeState)
+      }
       this.pending = { screenW, screenH, payload, animT }
+      this.visible = false
       void this.ensureBaked()
+    } else {
+      this.visible = true
     }
     return this.lastHits
   }
@@ -142,8 +162,6 @@ export class WxGameModalCanvasLayer extends Sprite {
     payload: CompletePayload,
     animT: number,
   ): GameModalHitRects | null {
-    if (isWxCanvasBakeBusy()) return this.lastHits
-
     const gen = this.bakeGeneration
     const ok = runWxCanvasBakeSync(() => {
       const dpr = Math.min(getPlatform().getDevicePixelRatio(), 2)
@@ -172,9 +190,7 @@ export class WxGameModalCanvasLayer extends Sprite {
       )
       this.lastHits = hits
 
-      bakeCanvasToCanvasSprite(this, this.bakeState, canvas)
-      this.width = screenW
-      this.height = screenH
+      bakeCanvasToCanvasSprite(this, this.bakeState, canvas, screenW, screenH)
     })
 
     if (ok && gen === this.bakeGeneration) this.onTextureReady?.()
@@ -196,8 +212,8 @@ export class WxGameModalCanvasLayer extends Sprite {
     this.pending = null
     const gen = this.bakeGeneration
 
-    await withWxCanvasBakeLock(async () => {
-      if (gen !== this.bakeGeneration) return
+    const capture = await withWxCanvasBakeLock(async (): Promise<WxCanvasImageBakeCapture | null> => {
+      if (gen !== this.bakeGeneration) return null
       const dpr = Math.min(getPlatform().getDevicePixelRatio(), 2)
       const pixelW = Math.max(1, Math.ceil(p.screenW * dpr))
       const pixelH = Math.max(1, Math.ceil(p.screenH * dpr))
@@ -208,7 +224,7 @@ export class WxGameModalCanvasLayer extends Sprite {
       }
 
       const ctx = getWxCanvas2dContext(canvas)
-      if (!ctx) return
+      if (!ctx) return null
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, p.screenW, p.screenH)
@@ -237,14 +253,18 @@ export class WxGameModalCanvasLayer extends Sprite {
             )
       this.lastHits = hits
 
-      if (gen !== this.bakeGeneration) return
+      if (gen !== this.bakeGeneration) return null
 
-      await bakeCanvasToImageSprite(this, this.bakeState, canvas, dpr, p.screenW, p.screenH)
+      return snapshotWxCanvasForImageBake(canvas, dpr, p.screenW, p.screenH)
+    })
+    if (gen !== this.bakeGeneration) return
+    if (await applyWxCanvasImageBakeCapture(this, this.bakeState, capture)) {
       if (gen !== this.bakeGeneration) return
       this.width = p.screenW
       this.height = p.screenH
+      this.visible = true
       this.onTextureReady?.()
-    })
+    }
   }
 
   override destroy(options?: Parameters<Sprite['destroy']>[0]): void {

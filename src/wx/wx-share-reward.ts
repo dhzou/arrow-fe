@@ -26,7 +26,7 @@ async function callShareReward(data: Record<string, unknown>): Promise<ShareRewa
   return (res.result ?? {}) as ShareRewardCloudResult
 }
 
-/** 普通分享成功后计次（每种奖励类型每天最多 3 次） */
+/** 普通分享成功后计次（每种奖励类型每天最多 5 次） */
 export async function tryRecordWxShareReward(
   rewardType: WxShareRewardType,
 ): Promise<WxShareRewardOutcome> {

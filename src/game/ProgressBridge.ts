@@ -3,7 +3,13 @@ import {
   resolveSignInStatus,
   type SignInReward,
 } from '@/game/daily-sign-in'
+import {
+  canDailyShareForReward,
+  getDailyShareRemaining,
+  recordDailyShareReward,
+} from '@/game/daily-share-reward'
 import type { SaveData } from '@/game-core/types'
+import type { ShareRewardType } from '@/platform/types'
 import {
   defaultSaveData,
   loadSaveData,
@@ -72,6 +78,23 @@ export class ProgressBridge implements ProgressPort {
     this.data.assistsRemaining += result.reward.assists
     this.persist()
     return { ok: true, reward: result.reward, message: result.message }
+  }
+
+  getDailyShareRemaining(type: ShareRewardType): number {
+    return getDailyShareRemaining(this.data.dailyShareReward, type)
+  }
+
+  canDailyShareForReward(type: ShareRewardType): boolean {
+    return canDailyShareForReward(this.data.dailyShareReward, type)
+  }
+
+  recordDailyShareReward(type: ShareRewardType) {
+    const result = recordDailyShareReward(this.data.dailyShareReward, type)
+    if (result.ok) {
+      this.data.dailyShareReward = result.state
+      this.persist()
+    }
+    return result
   }
 
   cycleBoardTheme(): BoardTheme {

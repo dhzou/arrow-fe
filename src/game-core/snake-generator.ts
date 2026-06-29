@@ -1,3 +1,4 @@
+import { jaccard, normalizedCenterOccupancy } from './level-similarity'
 import {
   jitterLevelInBoard,
   SAME_SIZE_TRANSFORMS,
@@ -8,7 +9,7 @@ import {
 import type { Direction, GridPoint, SnakeLevelData, SnakePiece } from './snake-types'
 import { DIRECTION_VECTORS } from './snake-types'
 import { isLevelSolvableForBake, passesBakeLevelCheck, simulateSnakeMove } from './snake-grid'
-import { createRng, pickRandom } from './random'
+import { createRng, levelSeed, pickRandom } from './random'
 import {
   difficultyForLevelNumber,
   L1_BOARD,
@@ -461,6 +462,93 @@ function fitSnakeLevelToFixedBoard(
   }
 }
 
+/** L22+ 内层锚点：从 L(n-10) 逐关扩展，split-only 关用 quick-split */
+export const INTERIOR_ANCHOR_OFFSET = 10
+
+function quickSplitInteriorLevel(
+  base: SnakeLevelData,
+  targetLevel: number,
+  maxAttempts = 300,
+): SnakeLevelData | null {
+  const target = pathStyleSnakeCount(targetLevel)
+  const toAdd = target - base.snakes.length
+  const fixedBoard = fixedBoardForLevel(targetLevel)
+  const width = fixedBoard?.width ?? base.width
+  const height = fixedBoard?.height ?? base.height
+
+  if (toAdd <= 0) {
+    return buildFixedBoardCandidate(
+      targetLevel,
+      base.snakes.slice(0, target).map((s) => ({
+        id: s.id,
+        cells: s.cells.map((c) => ({ ...c })),
+      })),
+      { width, height },
+    )
+  }
+
+  const seed = levelSeed(targetLevel)
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const rng = createRng(seed + attempt * 3571)
+    const split = splitSnakesToCountForBake(base.snakes, toAdd, rng, width, height)
+    if (!split) continue
+
+    const candidate = buildFixedBoardCandidate(targetLevel, split, { width, height })
+    if (candidate.snakes.length !== target) continue
+    if (occupancyRatio(candidate) < 0.84) continue
+    if (!passesGenerationCheck(candidate.snakes, candidate.width, candidate.height)) continue
+    return candidate
+  }
+
+  return null
+}
+
+/** L22+：内层来自 L(n-10)，外层逐关生长；与 L(n-1) 主链脱钩 */
+export function generateInteriorAnchoredLevel(
+  anchor: SnakeLevelData,
+  levelNumber: number,
+): SnakeLevelData | null {
+  const anchorNum = levelNumber - INTERIOR_ANCHOR_OFFSET
+  if (anchorNum < 1 || anchor.levelNumber !== anchorNum) return null
+
+  let current: SnakeLevelData = {
+    levelNumber: anchorNum,
+    width: anchor.width,
+    height: anchor.height,
+    snakes: anchor.snakes.map((s) => ({
+      id: s.id,
+      cells: s.cells.map((c) => ({ ...c })),
+    })),
+  }
+
+  for (let step = anchorNum + 1; step <= levelNumber; step++) {
+    const target = pathStyleSnakeCount(step)
+    const delta = target - current.snakes.length
+    const toAdd = isFixedBoardSplitOnlyLevel(step)
+      ? delta
+      : Math.min(PATH_STYLE_SNAKE_STEP, delta)
+
+    if (isFixedBoardSplitOnlyLevel(step)) {
+      const split = quickSplitInteriorLevel(current, step)
+      if (!split) return null
+      current = split
+      continue
+    }
+
+    const seed = levelSeed(step)
+    const maxAttempts = step >= 20 ? 400 : step >= 14 ? 250 : 120
+    let next: SnakeLevelData | null = null
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      next = extendPathStyleLevel(current, step, toAdd, seed + attempt * 3571)
+      if (next) break
+    }
+    if (!next) return null
+    current = next
+  }
+
+  return current
+}
+
 /** 固定棋盘扩展：新行空间有限，蛇身略短、优先落在新扩区域 */
 function snakeLengthForFixedBoardExtend(
   rng: () => number,
@@ -528,7 +616,7 @@ function trySplitOneSnake(
 }
 
 /** 拆分若干条长蛇，使蛇数 +splitCount（用于 L14→L15 等满盘扩关） */
-function splitSnakesToCount(
+export function splitSnakesToCountForBake(
   snakes: SnakePiece[],
   splitCount: number,
   rng: () => number,
@@ -608,11 +696,21 @@ function growPathsIntoNewRows(
   return current
 }
 
-/** L16–L18 从 L14 独立生成时，每关强制不同变换避免三关长得一样 */
+/** 独立锚点生成时强制变换，避免相邻关长得一样 */
 const FIXED_LEVEL_FORCED_TRANSFORM: Partial<Record<number, LevelTransform>> = {
   16: 'flipX',
   17: 'flipY',
   18: 'rot180',
+  22: 'rot90',
+  23: 'rot270',
+  24: 'flipX',
+  25: 'flipY',
+  26: 'rot180',
+  27: 'flipX',
+  28: 'rot90',
+  29: 'rot270',
+  30: 'flipY',
+  31: 'rot180',
 }
 
 function buildFixedBoardCandidate(
@@ -645,11 +743,12 @@ export function generateFixedBoardLevelFromAnchor(
   const splitCount = Math.max(0, targetCount - anchor.snakes.length)
   const forced = FIXED_LEVEL_FORCED_TRANSFORM[levelNumber]
   const transformPool = SAME_SIZE_TRANSFORMS.filter((t) => t !== 'id')
+  const maxAttempts = splitCount >= 30 ? 800 : 400
 
-  for (let attempt = 0; attempt < 400; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const rng = createRng(seed + attempt * 3571)
 
-    const split = splitSnakesToCount(
+    const split = splitSnakesToCountForBake(
       anchor.snakes,
       splitCount,
       rng,
@@ -681,6 +780,7 @@ export function generateFixedBoardLevelFromAnchor(
 
       const candidate = buildFixedBoardCandidate(levelNumber, snakes, fixedBoard)
       if (candidate.snakes.length !== targetCount) continue
+      if (occupiedCellCount(candidate) <= occupiedCellCount(anchor)) continue
       if (occupancyRatio(candidate) < minOccupancy) continue
       if (!passesGenerationCheck(candidate.snakes, candidate.width, candidate.height)) continue
       return candidate
@@ -704,7 +804,7 @@ function extendFixedBoardWithSplit(
   for (let attempt = 0; attempt < 300; attempt++) {
     const rng = createRng(seed + attempt * 3571)
 
-    const split = splitSnakesToCount(
+    const split = splitSnakesToCountForBake(
       base.snakes,
       addSnakes,
       rng,
@@ -736,6 +836,7 @@ function extendFixedBoardWithSplit(
       const candidate = buildFixedBoardCandidate(levelNumber, snakes, fixedBoard)
 
       if (candidate.snakes.length !== targetCount) continue
+      if (occupiedCellCount(candidate) <= occupiedCellCount(base)) continue
       if (occupancyRatio(candidate) < minOccupancy) continue
       if (!passesGenerationCheck(candidate.snakes, candidate.width, candidate.height)) continue
       return candidate
@@ -762,7 +863,7 @@ function extendFixedBoardSplitOnly(
 
   for (let attempt = 0; attempt < 500; attempt++) {
     const rng = createRng(seed + attempt * 3571)
-    const split = splitSnakesToCount(
+    const split = splitSnakesToCountForBake(
       working.snakes,
       addSnakes,
       rng,
@@ -773,6 +874,7 @@ function extendFixedBoardSplitOnly(
 
     const candidate = buildFixedBoardCandidate(levelNumber, split, fixedBoard)
     if (candidate.snakes.length !== targetCount) continue
+    if (occupiedCellCount(candidate) <= occupiedCellCount(working)) continue
     if (occupancyRatio(candidate) < minOccupancy) continue
     if (!passesGenerationCheck(candidate.snakes, candidate.width, candidate.height)) continue
     return candidate
@@ -1074,6 +1176,123 @@ export function extendPathStyleLevel(
   }
 
   return null
+}
+
+/** L2–L10：小盘紧凑 + 锚关不同变换生长，降低中心克隆 */
+export const COMPACT_DISTINCT_MIN = 2
+export const COMPACT_DISTINCT_MAX = 10
+/** @deprecated 使用 COMPACT_DISTINCT_MIN/MAX */
+export const COMPACT_EARLY_MIN = 2
+export const COMPACT_EARLY_MAX = 4
+/** @deprecated 使用 COMPACT_DISTINCT_MIN/MAX */
+export const INDEPENDENT_CLUSTER_LEVEL_MIN = 5
+/** @deprecated 使用 COMPACT_DISTINCT_MIN/MAX */
+export const INDEPENDENT_CLUSTER_LEVEL_MAX = 10
+
+const COMPACT_DISTINCT_TRANSFORMS: Record<number, LevelTransform | LevelTransform[]> = {
+  2: 'id',
+  3: 'flipX',
+  4: ['flipY', 'rot180'],
+  5: ['id', 'flipY'],
+  6: 'flipX',
+  7: 'rot180',
+  8: 'flipY',
+  9: 'flipX',
+  10: 'rot180',
+}
+
+function compactDistinctTransformCandidates(levelNumber: number): LevelTransform[] {
+  const entry = COMPACT_DISTINCT_TRANSFORMS[levelNumber] ?? 'id'
+  return Array.isArray(entry) ? entry : [entry]
+}
+
+function buildCompactFromAnchor(
+  anchor: SnakeLevelData,
+  levelNumber: number,
+  stepFrom: number,
+  transform: LevelTransform,
+  attemptSeed: number,
+): SnakeLevelData | null {
+  let current: SnakeLevelData =
+    transform === 'id'
+      ? cloneSnakeLevel(anchor, anchor.levelNumber)
+      : transformLevelSameSize(cloneSnakeLevel(anchor, anchor.levelNumber), transform)
+
+  for (let step = stepFrom; step <= levelNumber; step++) {
+    const stepTarget = pathStyleSnakeCount(step)
+    const delta = stepTarget - current.snakes.length
+    if (delta <= 0) continue
+    const toAdd = Math.min(PATH_STYLE_SNAKE_STEP, delta)
+    const next = extendPathStyleLevel(current, step, toAdd, attemptSeed + step * 7919)
+    if (!next) return null
+    current = next
+  }
+
+  return { ...current, levelNumber }
+}
+
+function maxCenterJaccardVs(level: SnakeLevelData, priors: SnakeLevelData[]): number {
+  let max = 0
+  const center = normalizedCenterOccupancy(level)
+  for (const prior of priors) {
+    max = Math.max(max, jaccard(center, normalizedCenterOccupancy(prior)))
+  }
+  return max
+}
+
+/** 紧凑小盘：占用率 ≥84%，尽量降低与 priorLevels 的中心重叠 */
+export function generateCompactDistinctFromAnchor(
+  anchor: SnakeLevelData,
+  levelNumber: number,
+  stepFrom: number,
+  seed: number,
+  priorLevels: SnakeLevelData[],
+  maxAttempts = 600,
+): SnakeLevelData | null {
+  if (levelNumber < stepFrom || levelNumber > COMPACT_DISTINCT_MAX) return null
+
+  let best: SnakeLevelData | null = null
+  let bestScore = Infinity
+
+  for (const transform of compactDistinctTransformCandidates(levelNumber)) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const attemptSeed = seed + attempt * 3571
+      const candidate = buildCompactFromAnchor(
+        anchor,
+        levelNumber,
+        stepFrom,
+        transform,
+        attemptSeed,
+      )
+      if (!candidate || occupancyRatio(candidate) < 0.84) continue
+
+      const score = maxCenterJaccardVs(candidate, priorLevels)
+      if (score < bestScore) {
+        bestScore = score
+        best = candidate
+      }
+    }
+  }
+
+  return best
+}
+
+/** L2–L4 便捷封装（锚关 L1） */
+export function generateCompactDistinctEarlyLevel(
+  l1: SnakeLevelData,
+  levelNumber: number,
+  seed: number,
+  priorLevels: SnakeLevelData[],
+  maxAttempts = 600,
+): SnakeLevelData | null {
+  return generateCompactDistinctFromAnchor(
+    l1,
+    levelNumber,
+    COMPACT_EARLY_MIN,
+    seed,
+    priorLevels,
+    maxAttempts,
+  )
 }
 
 /** L1–L7 从零密铺；L8+ 建议传入上一关用 extendPathStyleLevel */

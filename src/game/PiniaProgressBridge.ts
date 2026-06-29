@@ -1,6 +1,7 @@
 import { DEFAULT_BOARD_THEME_INDEX, getBoardTheme, normalizeBoardThemeIndex } from '@/game/board-theme'
 import type { BoardTheme } from '@/game/board-theme'
 import { useProgressStore } from '@/stores/progress'
+import type { ShareRewardType } from '@/platform/types'
 import type { ProgressPort } from './ProgressPort'
 
 /** Web 端：GameController 通过 Pinia 读写进度 */
@@ -47,6 +48,18 @@ export class PiniaProgressBridge implements ProgressPort {
 
   claimDailySignIn() {
     return this.store.claimDailySignIn()
+  }
+
+  getDailyShareRemaining(type: ShareRewardType): number {
+    return this.store.getDailyShareRemaining(type)
+  }
+
+  canDailyShareForReward(type: ShareRewardType): boolean {
+    return this.store.canDailyShareForReward(type)
+  }
+
+  recordDailyShareReward(type: ShareRewardType) {
+    return this.store.recordDailyShareReward(type)
   }
 
   cycleBoardTheme(): BoardTheme {

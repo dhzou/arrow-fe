@@ -15,6 +15,12 @@ import {
   resolveSignInStatus,
   type SignInReward,
 } from '@/game/daily-sign-in'
+import {
+  canDailyShareForReward,
+  getDailyShareRemaining,
+  recordDailyShareReward,
+} from '@/game/daily-share-reward'
+import type { ShareRewardType } from '@/platform/types'
 
 export const useProgressStore = defineStore('progress', {
   state: (): SaveData & { storageWarning: boolean } => ({
@@ -37,6 +43,7 @@ export const useProgressStore = defineStore('progress', {
         completedLevels: this.completedLevels,
         dailyChallenge: this.dailyChallenge,
         dailySignIn: this.dailySignIn,
+        dailyShareReward: this.dailyShareReward,
         settings: this.settings,
         tutorialDone: this.tutorialDone,
         winStreak: this.winStreak,
@@ -64,6 +71,23 @@ export const useProgressStore = defineStore('progress', {
       this.assistsRemaining += result.reward.assists
       this.persist()
       return { ok: true, reward: result.reward, message: result.message }
+    },
+
+    getDailyShareRemaining(type: ShareRewardType): number {
+      return getDailyShareRemaining(this.dailyShareReward, type)
+    },
+
+    canDailyShareForReward(type: ShareRewardType): boolean {
+      return canDailyShareForReward(this.dailyShareReward, type)
+    },
+
+    recordDailyShareReward(type: ShareRewardType) {
+      const result = recordDailyShareReward(this.dailyShareReward, type)
+      if (result.ok) {
+        this.dailyShareReward = result.state
+        this.persist()
+      }
+      return result
     },
 
     completeLevel(levelNumber: number) {
@@ -114,6 +138,7 @@ export const useProgressStore = defineStore('progress', {
       this.completedLevels = data.completedLevels
       this.dailyChallenge = data.dailyChallenge
       this.dailySignIn = data.dailySignIn
+      this.dailyShareReward = data.dailyShareReward
       this.settings = data.settings
       this.tutorialDone = data.tutorialDone
       this.winStreak = data.winStreak

@@ -1,4 +1,5 @@
 import type { WxGameIconName } from '@/wx/wx-game-icons'
+import { BADGE_WARM_END, BADGE_WARM_START, NUMERIC_BADGE_HEIGHT } from '@/wx/wx-draw'
 import {
   ASSIST_ICON_INNER,
   ASSIST_ICON_OUTER,
@@ -230,6 +231,42 @@ export function fillGlassPanelAccent(
   ctx.lineWidth = 1
   roundRectPath(ctx, x, y, w, h, r)
   ctx.stroke()
+}
+
+/** HUD 数字角标 — Canvas2D 烘焙（Pixi 多 rect fill 在 iOS 真机常丢失成黑块） */
+export function drawNumericBadge2d(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  label: string,
+  warm: boolean,
+): void {
+  const r = h / 2
+  const cx = x + w / 2
+  const cy = y + h / 2
+  const [c1, c2] = warm
+    ? [BADGE_WARM_START, BADGE_WARM_END]
+    : [WX_THEME.accent, WX_THEME.accent2]
+
+  const grad = ctx.createLinearGradient(x, cy, x + w, cy)
+  grad.addColorStop(0, hexCss(c1))
+  grad.addColorStop(1, hexCss(c2))
+  ctx.fillStyle = grad
+  roundRectPath(ctx, x, y, w, h, r)
+  ctx.fill()
+
+  ctx.strokeStyle = hexCss(WX_THEME.surfaceStrong, WX_THEME.surfaceStrongAlpha)
+  ctx.lineWidth = 1.5
+  roundRectPath(ctx, x, y, w, h, r)
+  ctx.stroke()
+
+  fillTextCenter(ctx, label, cx, cy + 0.5, {
+    fontSize: 10,
+    fontWeight: '800',
+    fill: hexCss(WX_THEME.btnTextDark),
+  })
 }
 
 export function fillTextCenter(

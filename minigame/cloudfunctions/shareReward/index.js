@@ -4,7 +4,7 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 
 const db = cloud.database()
 
-const MAX_SHARE_PER_DAY = 3
+const MAX_SHARE_PER_DAY = 5
 
 function todayKey() {
   const d = new Date(Date.now() + 8 * 60 * 60 * 1000)
@@ -19,7 +19,7 @@ function normalizeRewardType(type) {
   return null
 }
 
-/** 分享奖励：普通转发，按奖励类型每天最多 3 次 */
+/** 分享奖励：普通转发，按奖励类型每天最多 5 次 */
 exports.main = async (event) => {
   const { OPENID } = cloud.getWXContext()
   if (!OPENID) {

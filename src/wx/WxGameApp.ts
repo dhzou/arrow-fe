@@ -17,12 +17,14 @@ import { playSound, resumeAudio } from '@/utils/sound'
 import { MINIGAME_STORE } from '@/game/game-ui-content'
 import { PATH_MAIN_ANIM_SEC } from '@/canvas-home/preview-path-animation'
 import { WX_HOME_ANIM_MS, WX_HOME_ANIM_SPEED, wxHomeAnimFrame, wxHomePreviewFrame } from '@/wx/wx-home-anim'
+import { setWxHomeAnimBakePriority } from '@/wx/wx-canvas-bake'
 import { WxHomeOverlay, type WxHomeAction } from './WxHomeOverlay'
 import type { WxHudAction, WxHudState, WxHudOverlay } from './WxHudOverlay'
 import { WxLeaderboardOverlay, type WxLeaderboardAction } from './WxLeaderboardOverlay'
 import { WxSettingsOverlay, type WxSettingsAction } from './WxSettingsOverlay'
 import { WxSignInOverlay, type WxSignInAction } from './WxSignInOverlay'
 import { loadWxGameCore } from './wx-game-core-loader'
+import { isWxIosPlatform } from '@/wx/canvas'
 import { hideWxLoadingCover } from './wx-loading-cover'
 import {
   fetchLeaderboard,
@@ -30,7 +32,7 @@ import {
   isWxRankingAvailable,
   submitRanking,
 } from './wx-ranking'
-import { WX_THEME_INDEX } from './wx-theme'
+import { getWxThemeIndex } from './wx-theme'
 
 type WxScreen = 'home' | 'game' | 'leaderboard'
 
@@ -60,6 +62,9 @@ export class WxGameApp {
   private boardPinchRenderRaf: number | null = null
   private suppressBoardTap = false
   private suppressBoardTapTimer: number | null = null
+  private touchStart: { x: number; y: number } | null = null
+  /** iOS 首页 chip 在 touchStart 已触发，避免 touchEnd 漂移重复/误判 */
+  private homeChipTapHandled = false
   private unsubResize: (() => void) | null = null
   private loadError = ''
   private screen: WxScreen = 'home'
@@ -111,11 +116,13 @@ export class WxGameApp {
       this.renderer.forceRender()
     })
     this.settings.bindCanvasTextureReady(() => this.renderer.forceRender())
+    this.signIn.bindCanvasTextureReady(() => this.renderer.forceRender())
 
     const onPressVisualChange = (): void => {
-      this.renderer.forceRender()
+      this.renderer.forceRender(true)
     }
     this.home.onPressVisualChange = onPressVisualChange
+    this.home.onTextReady = () => this.renderer.forceRender()
     this.settings.onPressVisualChange = onPressVisualChange
     this.signIn.onPressVisualChange = onPressVisualChange
     this.leaderboard.onPressVisualChange = onPressVisualChange
@@ -149,6 +156,7 @@ export class WxGameApp {
       await this.home.loadAssets(pixiApp)
     }
     await this.home.ensureVisualReady()
+    await this.home.rebakeLayoutTexts()
     this.homeTextsReady = true
     this.syncHome()
   }
@@ -166,7 +174,7 @@ export class WxGameApp {
     this.hud.bindPauseTextureReady(() => this.renderer.forceRender())
     this.hud.bindHudTextReady(() => this.renderer.forceRender())
     this.hud.bindGameModalTextureReady(() => this.renderer.forceRender())
-    this.hud.onPressVisualChange = () => this.renderer.forceRender()
+    this.hud.onPressVisualChange = () => this.renderer.forceRender(true)
   }
 
   private async ensureHud(): Promise<WxHudOverlay> {
@@ -199,6 +207,10 @@ export class WxGameApp {
       },
       onTutorialStep: () => {
         this.syncHud()
+        if (this.controller?.overlay === 'tutorial') {
+          this.hud?.tickTutorialDecor(this.tutorialClock / 1000)
+          this.renderer.forceRender()
+        }
       },
       onLoadError: (message) => {
         this.loadError = message
@@ -211,7 +223,12 @@ export class WxGameApp {
       captureShareImage: () => this.captureBoardShareImage(),
     })
     this.renderer.onCellClick((x, y) => {
-      void this.ensureController().then((c) => c.handleTap(x, y))
+      const c = this.controller
+      if (c) {
+        void c.handleTap(x, y)
+        return
+      }
+      void this.ensureController().then((ctrl) => ctrl.handleTap(x, y))
     })
     return this.controller
   }
@@ -230,9 +247,13 @@ export class WxGameApp {
     this.hud?.layout(metrics.width, metrics.height, metrics.safeAreaTop, metrics.safeAreaBottom)
   }
 
-  private async relayoutHomeTexts(metrics: ReturnType<typeof wxPlatform.getScreenMetrics>): void {
+  private async relayoutHomeTexts(metrics: ReturnType<typeof wxPlatform.getScreenMetrics>): Promise<void> {
+    this.stopHomeDecorLoop()
     this.home.layout(metrics.width, metrics.height, metrics.safeAreaTop, metrics.safeAreaBottom)
-    await this.home.rebakeAllTexts()
+    await this.home.rebakeLayoutTexts()
+    if (this.screen === 'home' && this.homeTextsReady) {
+      this.startHomeDecorLoop(false, true)
+    }
   }
 
   /** 弹窗层默认隐藏，避免冷启动 layout/redraw 在 applyScreen 前上屏 */
@@ -255,23 +276,38 @@ export class WxGameApp {
     this.renderer.setGameplayVisible(this.screen === 'game')
     this.clearAllButtonPress()
     if (this.screen === 'home' && this.homeTextsReady) {
-      if (opts?.preserveHomeVisual) {
-        this.startHomeDecorLoop(false, true)
-      } else if (opts?.coldStart) {
-        this.startHomeDecorLoop(this.homeDecorDelayOnShow, false)
-        this.homeDecorDelayOnShow = false
-      } else {
-        this.home.prepareForDisplay()
-        this.startHomeDecorLoop(this.homeDecorDelayOnShow)
-        this.homeDecorDelayOnShow = false
-      }
+      void this.transitionHomeScreen(opts)
     } else {
       this.stopHomeDecorLoop()
     }
     this.renderer.forceRender()
   }
 
+  /** 动效循环前先完成文字烘焙（homeAnimBakePriority 会阻塞异步烘焙） */
+  private async transitionHomeScreen(opts?: {
+    preserveHomeVisual?: boolean
+    coldStart?: boolean
+  }): Promise<void> {
+    this.stopHomeDecorLoop()
+    if (!opts?.preserveHomeVisual && !opts?.coldStart) {
+      this.home.prepareForDisplay()
+    }
+    await this.home.rebakeLayoutTexts()
+    if (this.screen !== 'home' || !this.homeTextsReady) return
+    if (opts?.preserveHomeVisual) {
+      this.startHomeDecorLoop(false, true)
+    } else if (opts?.coldStart) {
+      this.startHomeDecorLoop(this.homeDecorDelayOnShow, false)
+      this.homeDecorDelayOnShow = false
+    } else {
+      this.startHomeDecorLoop(this.homeDecorDelayOnShow)
+      this.homeDecorDelayOnShow = false
+    }
+    this.renderer.forceRender()
+  }
+
   private startHomeDecorLoop(delayDecor = false, preserveFrames = false): void {
+    setWxHomeAnimBakePriority(true)
     if (!preserveFrames) {
       this.homeDecorFrame = -1
       this.homePreviewFrame = -1
@@ -283,10 +319,10 @@ export class WxGameApp {
     this.homeDecorStartMs = delayDecor ? performance.now() + 120 : performance.now()
     this.homeAnimLastTs = 0
 
-    const tick = (ts: number): void => {
+    const tick = (): void => {
       if (this.screen !== 'home') return
-      const now = typeof ts === 'number' ? ts : performance.now()
-      if (performance.now() < this.homeDecorStartMs) {
+      const now = performance.now()
+      if (now < this.homeDecorStartMs) {
         this.homeAnimRaf = this.platform.requestAnimationFrame(tick)
         return
       }
@@ -299,8 +335,9 @@ export class WxGameApp {
         this.homeAnimKey = animKey
         this.homeDecorFrame = wxHomeAnimFrame(t)
         this.homePreviewFrame = wxHomePreviewFrame(t)
-        this.home.refreshVisualAnimated(t)
-        this.renderer.forceRender()
+        if (this.home.refreshVisualAnimated(t)) {
+          this.renderer.forceRender()
+        }
       }
 
       this.homeAnimRaf = this.platform.requestAnimationFrame(tick)
@@ -310,6 +347,7 @@ export class WxGameApp {
   }
 
   private stopHomeDecorLoop(): void {
+    setWxHomeAnimBakePriority(false)
     if (this.homeAnimRaf) {
       this.platform.cancelAnimationFrame(this.homeAnimRaf)
       this.homeAnimRaf = 0
@@ -348,23 +386,25 @@ export class WxGameApp {
         this.startCompleteDecorLoop()
       }
     } else if (this.screen === 'home') {
-      this.startHomeDecorLoop(false, true)
+      this.stopHomeDecorLoop()
       this.syncHome()
       if (this.settingsOpen) {
         this.settings.recoverAfterBackground()
         this.syncSettings()
       }
-      this.renderer.resumeAfterBackground()
-      void this.finishHomeReshow(metrics)
       if (this.signInOpen) {
+        this.signIn.recoverAfterBackground()
         this.syncSignIn()
       }
+      this.renderer.resumeAfterBackground()
+      void this.finishHomeReshow(metrics)
       return
     } else if (this.screen === 'leaderboard') {
       this.renderer.forceRender()
     }
 
     if (this.signInOpen) {
+      this.signIn.recoverAfterBackground()
       this.syncSignIn()
     }
 
@@ -408,7 +448,7 @@ export class WxGameApp {
 
   private syncSettings(): void {
     const boardThemeIndex = this.progress.boardThemeIndex
-    if (boardThemeIndex !== WX_THEME_INDEX) {
+    if (boardThemeIndex !== getWxThemeIndex()) {
       syncThemePack(boardThemeIndex)
     }
     this.settings.update({
@@ -439,6 +479,10 @@ export class WxGameApp {
 
   private syncHud(): void {
     if (this.screen !== 'game') return
+    const boardThemeIndex = this.progress.boardThemeIndex
+    if (boardThemeIndex !== getWxThemeIndex()) {
+      syncThemePack(boardThemeIndex)
+    }
     const c = this.controller
     if (!c) return
     const levelNumber = c.session?.level.levelNumber ?? this.progress.currentLevel
@@ -467,6 +511,8 @@ export class WxGameApp {
       zoomLocked,
       canShareForHint: c.canShareForHint(),
       canShareForAssist: c.canShareForAssist(),
+      shareHintRemaining: c.dailyShareRemaining('hint'),
+      shareAssistRemaining: c.dailyShareRemaining('assist'),
       canShareForTime: c.canShareForTime(),
       shareTimeRemaining: c.shareTimeRemaining(),
       canShareForLife: c.canShareForLife(),
@@ -476,7 +522,7 @@ export class WxGameApp {
     }
     if (!this.hud) return
     if (this.hud.update(state)) {
-      this.renderer.forceRender()
+      this.renderer.forceRender(this.renderer.isBoardAnimating())
     }
     this.syncTutorialDecorLoop()
     this.syncCompleteDecorLoop()
@@ -536,6 +582,8 @@ export class WxGameApp {
     if (this.tutorialDecorRaf !== null) return
     this.tutorialClock = 0
     this.tutorialAnimLastMs = 0
+    this.hud?.tickTutorialDecor(0)
+    this.renderer.forceRender()
     const tick = (): void => {
       if (this.screen !== 'game' || this.controller?.overlay !== 'tutorial') {
         this.tutorialDecorRaf = null
@@ -759,7 +807,28 @@ export class WxGameApp {
 
   private onTouchStart(x: number, y: number): void {
     void resumeAudio()
+    this.touchStart = { x, y }
+    this.homeChipTapHandled = false
     if (this.screen === 'home' || this.screen === 'leaderboard') {
+      if (this.screen === 'home' && isWxIosPlatform()) {
+        this.home.ensureHitRects()
+        if (this.signInOpen) {
+          this.signIn.ensureHitRects()
+          const signInAction = this.signIn.hitTest(x, y)
+          if (signInAction === 'claim' || signInAction === 'close') {
+            this.homeChipTapHandled = true
+            this.handleSignInAction(signInAction)
+            return
+          }
+        } else if (!this.settingsOpen) {
+          const homeAction = this.home.hitTest(x, y)
+          if (homeAction === 'signin' || homeAction === 'settings' || homeAction === 'leaderboard') {
+            this.homeChipTapHandled = true
+            this.handleHomeAction(homeAction)
+            return
+          }
+        }
+      }
       this.updateButtonPress(x, y)
       return
     }
@@ -810,26 +879,50 @@ export class WxGameApp {
   }
 
   private onTouchEnd(x: number, y: number): void {
+    if (this.homeChipTapHandled) {
+      this.homeChipTapHandled = false
+      this.touchStart = null
+      this.clearAllButtonPress()
+      return
+    }
     if (this.suppressBoardTap) {
+      this.touchStart = null
       this.clearAllButtonPress()
       return
     }
     if (this.zoomScrubbing) {
       this.applyZoomScrub(x, true)
       this.zoomScrubbing = false
+      this.touchStart = null
       this.clearAllButtonPress()
       return
     }
     if (this.renderer.handleScreenPanEnd()) {
+      this.touchStart = null
       this.clearAllButtonPress()
       return
     }
-    this.onTouch(x, y)
+    const hit = this.resolveTouchPoint(x, y)
+    this.onTouch(hit.x, hit.y)
+    this.touchStart = null
     this.clearAllButtonPress()
+  }
+
+  /** iOS 轻触抬起时坐标常漂移 — 首页/弹窗无拖拽，优先用按下点 */
+  private resolveTouchPoint(endX: number, endY: number): { x: number; y: number } {
+    const start = this.touchStart
+    if (!start) return { x: endX, y: endY }
+    if (this.screen === 'home' || this.screen === 'leaderboard') return start
+    const dx = endX - start.x
+    const dy = endY - start.y
+    const tolerance = isWxIosPlatform() ? 28 : 18
+    if (dx * dx + dy * dy <= tolerance * tolerance) return start
+    return { x: endX, y: endY }
   }
 
   private updateButtonPress(x: number, y: number): void {
     if (this.screen === 'home') {
+      this.home.ensureHitRects()
       if (this.settingsOpen) {
         const themeIdx = this.settings.hitThemeIndex(x, y)
         if (themeIdx !== null) {
@@ -840,6 +933,7 @@ export class WxGameApp {
         return
       }
       if (this.signInOpen) {
+        this.signIn.ensureHitRects()
         this.signIn.setPressedAction(this.signIn.hitTest(x, y))
         return
       }
@@ -911,6 +1005,7 @@ export class WxGameApp {
 
   private onTouch(x: number, y: number): void {
     if (this.screen === 'home') {
+      this.home.ensureHitRects()
       if (this.settingsOpen) {
         const themeIdx = this.settings.hitThemeIndex(x, y)
         if (themeIdx !== null) {
@@ -921,6 +1016,7 @@ export class WxGameApp {
         return
       }
       if (this.signInOpen) {
+        this.signIn.ensureHitRects()
         this.handleSignInAction(this.signIn.hitTest(x, y))
         return
       }
@@ -985,6 +1081,11 @@ export class WxGameApp {
         playSound('complete')
         this.syncSignIn(result.message)
         this.syncHome()
+        try {
+          wx.showToast?.({ title: result.message, icon: 'none', duration: 2200 })
+        } catch {
+          /* ignore */
+        }
       } else {
         playSound('tap')
         this.syncSignIn()
@@ -994,8 +1095,10 @@ export class WxGameApp {
 
   private openSignIn(): void {
     playSound('tap')
+    this.stopHomeDecorLoop()
     this.signInOpen = true
     this.signIn.visible = true
+    this.signIn.prepareForOpen()
     this.syncSignIn()
     this.playSignInEnterAnimation()
   }
@@ -1003,11 +1106,19 @@ export class WxGameApp {
   private closeSignIn(): void {
     this.signInOpen = false
     this.signIn.visible = false
+    if (this.screen === 'home' && this.homeTextsReady) {
+      this.startHomeDecorLoop(false, true)
+    }
     this.renderer.forceRender()
   }
 
-  /** 签到弹窗淡入 */
+  /** 签到弹窗淡入 — iOS 跳过：alpha=0 时全屏遮罩仍会吞 touchEnd */
   private playSignInEnterAnimation(): void {
+    if (isWxIosPlatform()) {
+      this.signIn.alpha = 1
+      this.renderer.forceRender()
+      return
+    }
     this.signIn.alpha = 0
     const start = performance.now()
     const duration = 240
@@ -1066,6 +1177,7 @@ export class WxGameApp {
     this.renderer.setBoardThemeIndex(this.progress.boardThemeIndex)
     this.syncSettings()
     this.syncHud()
+    this.settings.syncTheme()
     this.home.syncTheme()
     this.signIn.syncTheme()
     this.leaderboard.syncTheme()

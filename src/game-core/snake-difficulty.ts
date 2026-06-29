@@ -89,6 +89,16 @@ export function isCompactPathLevel(levelNumber: number): boolean {
   return levelNumber >= 1 && levelNumber <= COMPACT_PATH_MAX_LEVEL
 }
 
+/** L1–31 与 L32+ 变体：小盘路径风视觉（格点渐进、线宽、布局与 L31 一致） */
+export function usesCompactPathVisual(levelNumber: number): boolean {
+  return isCompactPathLevel(levelNumber) || isInfiniteLevel(levelNumber)
+}
+
+/** @deprecated 使用 usesCompactPathVisual */
+export function usesProgressivePathGrid(levelNumber: number): boolean {
+  return usesCompactPathVisual(levelNumber)
+}
+
 export function isThemeMilestoneLevel(levelNumber: number): boolean {
   return isInfiniteLevel(levelNumber) && levelNumber % 10 === 0
 }

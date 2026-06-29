@@ -1,14 +1,23 @@
 import type { Application } from 'pixi.js'
 import { Container, Graphics } from 'pixi.js'
-import { computeHomeLayout, inRect, type HomeLayout, type Rect } from '@/canvas-home/home-layout'
+import {
+  computeHomeLayout,
+  hitHomeChipAction,
+  homePrimaryHitRects,
+  inflateRect,
+  inRect,
+  type HomeLayout,
+  type Rect,
+} from '@/canvas-home/home-layout'
 import { WX_HOME_ANIM_SPEED } from '@/wx/wx-home-anim'
 import { drawWxButtonPressHighlight } from '@/wx/wx-button-press'
 import { WxCanvasPreview } from '@/wx/wx-canvas-preview'
 import { WxHomeCanvasLayer } from '@/wx/WxHomeCanvasLayer'
-import { WxCanvasText, wxGradientTextStyle, wxTextStyle } from '@/wx/wx-canvas-text'
+import { WxCanvasText, wxGradientTextStyle, wxHomeTextMeasure, wxTextStyle } from '@/wx/wx-canvas-text'
 import { HOME_CSS } from '@/canvas-home/home-css'
 import { MINIGAME_STORE } from '@/game/game-ui-content'
 import { isWxMiniGame } from '@/platform'
+import { isWxIosPlatform } from '@/wx/canvas'
 import { WX_THEME } from '@/wx/wx-theme'
 
 export type WxHomeAction = 'start' | 'signin' | 'settings' | 'leaderboard' | 'none'
@@ -49,9 +58,9 @@ export class WxHomeOverlay extends Container {
     '连胜 0 · 从当前关卡继续',
     wxTextStyle(WX_THEME.textDim, 12),
   )
-  private readonly chip0 = new WxCanvasText('每日签到', wxTextStyle(WX_THEME.textMuted, 12))
-  private readonly chip1 = new WxCanvasText('全服排行', wxTextStyle(WX_THEME.textMuted, 12))
-  private readonly chip2 = new WxCanvasText('设置', wxTextStyle(WX_THEME.textMuted, 12))
+  private readonly chip0 = new WxCanvasText('每日签到', wxTextStyle(WX_THEME.textMuted, 12), { padX: 0, padY: 0 })
+  private readonly chip1 = new WxCanvasText('全服排行', wxTextStyle(WX_THEME.textMuted, 12), { padX: 0, padY: 0 })
+  private readonly chip2 = new WxCanvasText('设置', wxTextStyle(WX_THEME.textMuted, 12), { padX: 0, padY: 0 })
   private readonly startLabel = new WxCanvasText('开始游戏', wxTextStyle(WX_THEME.btnTextDark, 18, '800'))
 
   private screenW = 375
@@ -69,10 +78,12 @@ export class WxHomeOverlay extends Container {
   private readonly pressGfx = new Graphics()
   private pressedAction: WxHomeAction | null = null
   onPressVisualChange: (() => void) | null = null
+  onTextReady: (() => void) | null = null
   private readonly textNodes: WxCanvasText[]
 
   constructor() {
     super()
+    this.eventMode = 'none'
     this.textNodes = [
       this.badgeText,
       this.titleText,
@@ -87,6 +98,7 @@ export class WxHomeOverlay extends Container {
     ]
     this.addChild(this.canvasLayer)
     this.addChild(this.previewLayer)
+    this.signInDot.eventMode = 'none'
     this.addChild(this.signInDot)
     this.addChild(this.textLayer)
     this.addChild(this.pressGfx)
@@ -131,6 +143,26 @@ export class WxHomeOverlay extends Container {
     }
   }
 
+  /** chip / 缩放文案 — 布局变更后须 await，且在首页动效循环启动前完成 */
+  async rebakeLayoutTexts(): Promise<void> {
+    const nodes = [
+      this.badgeText,
+      this.titleText,
+      this.subtitleText,
+      this.cardTitle,
+      this.levelNumText,
+      this.levelSubText,
+      this.chip0,
+      this.chip1,
+      this.chip2,
+      this.startLabel,
+    ]
+    for (const node of nodes) {
+      await node.ensureBaked()
+    }
+    this.onTextReady?.()
+  }
+
   async rebakeAllTexts(): Promise<void> {
     await this.bakeAllTexts()
   }
@@ -144,6 +176,7 @@ export class WxHomeOverlay extends Container {
     this.canvasLayer.requestTextureRefresh()
     this.previewLayer.requestTextureRefresh()
     if (this.layoutCache) {
+      this.syncHitRectsFromLayout(this.layoutCache)
       this.refreshVisual()
       const { preview } = this.layoutCache
       this.previewLayer.refresh(0, preview.x, preview.y, preview.w, preview.h)
@@ -177,13 +210,7 @@ export class WxHomeOverlay extends Container {
 
   bindCanvasTextureReady(onReady: () => void): void {
     this.canvasLayer.onTextureReady = () => {
-      const rects = this.canvasLayer.getRects()
-      if (rects) {
-        this.startRect = rects.start
-        this.signInRect = rects.signIn
-        this.settingsRect = rects.settings
-        this.leaderboardRect = rects.leaderboard
-      }
+      if (this.layoutCache) this.syncHitRectsFromLayout(this.layoutCache)
       onReady()
     }
     this.previewLayer.onTextureReady = onReady
@@ -201,8 +228,20 @@ export class WxHomeOverlay extends Container {
     this.canClaimDailySignIn = state.canClaimDailySignIn
     this.levelNumText.text = `第 ${state.currentLevel} 关`
     this.levelSubText.text = `连胜 ${state.winStreak} · 从当前关卡继续`
+    this.ensureHitRects()
     this.refreshSignInDot()
     void this.rebakeDynamicTexts()
+  }
+
+  /** 触摸前确保热区与当前布局一致（不依赖 Canvas 烘焙回调） */
+  ensureHitRects(): void {
+    if (this.layoutCache) {
+      this.syncHitRectsFromLayout(this.layoutCache)
+      return
+    }
+    if (this.screenW > 0 && this.screenH > 0) {
+      this.redraw()
+    }
   }
 
   private refreshSignInDot(): void {
@@ -220,6 +259,7 @@ export class WxHomeOverlay extends Container {
   private async rebakeDynamicTexts(): Promise<void> {
     await this.levelNumText.ensureBaked()
     await this.levelSubText.ensureBaked()
+    this.onTextReady?.()
   }
 
   /** 从子页面（排行/游戏）回到首页 — 重绘静态帧，避免离屏 canvas 被其它层 resize 后拉伸闪动 */
@@ -227,6 +267,7 @@ export class WxHomeOverlay extends Container {
     this.canvasLayer.invalidateBakedTexture()
     this.previewLayer.invalidateBakedTexture()
     if (this.layoutCache) {
+      this.syncHitRectsFromLayout(this.layoutCache)
       this.refreshVisual()
       const { preview } = this.layoutCache
       this.previewLayer.refresh(0, preview.x, preview.y, preview.w, preview.h)
@@ -251,17 +292,27 @@ export class WxHomeOverlay extends Container {
   }
 
   /** 首页 Canvas 动效 — 卡片边框跑光、开始按钮扫光、背景光晕 */
-  refreshVisualAnimated(t: number): void {
+  refreshVisualAnimated(t: number): boolean {
     const L = this.layoutCache
-    if (!L) return
-    this.canvasLayer.refreshAnimated(this.screenW, this.screenH, this.safeTop, L, t)
+    if (!L) return false
+    return this.canvasLayer.refreshAnimated(this.screenW, this.screenH, this.safeTop, L, t)
   }
 
   hitTest(x: number, y: number): WxHomeAction {
-    if (inRect(x, y, this.startRect)) return 'start'
-    if (inRect(x, y, this.signInRect)) return 'signin'
-    if (inRect(x, y, this.leaderboardRect)) return 'leaderboard'
-    if (inRect(x, y, this.settingsRect)) return 'settings'
+    const chipSlop = isWxIosPlatform() ? 22 : 12
+    const L = this.layoutCache
+    if (L) {
+      const chip = hitHomeChipAction(x, y, L, chipSlop)
+      if (chip === 'signin') return 'signin'
+      if (chip === 'leaderboard') return 'leaderboard'
+      if (chip === 'settings') return 'settings'
+    } else {
+      const signInSlop = isWxIosPlatform() ? 22 : 12
+      if (inRect(x, y, inflateRect(this.signInRect, signInSlop))) return 'signin'
+      if (inRect(x, y, inflateRect(this.leaderboardRect, chipSlop))) return 'leaderboard'
+      if (inRect(x, y, inflateRect(this.settingsRect, chipSlop))) return 'settings'
+    }
+    if (inRect(x, y, inflateRect(this.startRect, 6))) return 'start'
     return 'none'
   }
 
@@ -305,10 +356,11 @@ export class WxHomeOverlay extends Container {
     this.layoutCache = computeHomeLayout(
       this.screenW,
       this.safeTop,
-      undefined,
+      isWxMiniGame() ? wxHomeTextMeasure() : undefined,
       this.screenH,
       this.safeBottom,
     )
+    this.syncHitRectsFromLayout(this.layoutCache)
     this.refreshVisual()
     this.layoutText()
     if (this.layoutCache && !isWxMiniGame()) {
@@ -317,17 +369,20 @@ export class WxHomeOverlay extends Container {
     }
   }
 
+  /** 点击热区来自布局，不依赖 Canvas 烘焙回调（iOS 异步烘焙完成前也能点） */
+  private syncHitRectsFromLayout(L: HomeLayout): void {
+    const hits = homePrimaryHitRects(L)
+    this.startRect = hits.start
+    this.signInRect = hits.signIn
+    this.leaderboardRect = hits.leaderboard
+    this.settingsRect = hits.settings
+    this.refreshSignInDot()
+  }
+
   private refreshVisual(): void {
     const L = this.layoutCache
     if (!L) return
-    const rects = this.canvasLayer.refresh(this.screenW, this.screenH, this.safeTop, L)
-    if (rects) {
-      this.startRect = rects.start
-      this.signInRect = rects.signIn
-      this.settingsRect = rects.settings
-      this.leaderboardRect = rects.leaderboard
-      this.refreshSignInDot()
-    }
+    this.canvasLayer.refresh(this.screenW, this.screenH, this.safeTop, L)
   }
 
   private layoutText(): void {
@@ -344,9 +399,11 @@ export class WxHomeOverlay extends Container {
     this.badgeText.x = L.badgeTextX
     this.badgeText.y = badge.y + badge.h / 2
 
+    this.subtitleText.setFontSize(HOME_CSS.subtitleSize * s)
     this.subtitleText.x = this.screenW / 2
     this.subtitleText.y = L.subtitleY
 
+    this.cardTitle.setFontSize(HOME_CSS.labelSize * s)
     this.cardTitle.x = L.card.x + L.card.w / 2
     this.cardTitle.y = L.cardLabelY
 
@@ -354,15 +411,18 @@ export class WxHomeOverlay extends Container {
     this.levelNumText.x = L.card.x + L.card.w / 2
     this.levelNumText.y = L.cardLevelY
 
+    this.levelSubText.setFontSize(HOME_CSS.subSize * s)
     this.levelSubText.x = L.card.x + L.card.w / 2
     this.levelSubText.y = L.cardSubY
 
     const chipTexts = [this.chip0, this.chip1, this.chip2]
     chipTexts.forEach((chip, i) => {
+      chip.setFontSize(HOME_CSS.chipFont * s)
       chip.x = L.chipTextX[i]
       chip.y = L.chips[i].y + L.chips[i].h / 2
     })
 
+    this.startLabel.setFontSize(18 * s)
     this.startLabel.x = L.startTextX
     this.startLabel.y = L.start.y + L.start.h / 2
   }

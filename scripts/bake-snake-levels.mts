@@ -5,7 +5,15 @@ import type { SnakeLevelData } from '../src/game-core/snake-types.ts'
 import {
   generatePathStyleClustered,
   extendPathStyleLevel,
+  generateCompactDistinctFromAnchor,
   generateFixedBoardLevelFromAnchor,
+  generateInteriorAnchoredLevel,
+  COMPACT_DISTINCT_MAX,
+  COMPACT_DISTINCT_MIN,
+  COMPACT_EARLY_MAX,
+  COMPACT_EARLY_MIN,
+  INDEPENDENT_CLUSTER_LEVEL_MIN,
+  INTERIOR_ANCHOR_OFFSET,
 } from '../src/game-core/snake-generator.ts'
 import { levelSeed } from '../src/game-core/random.ts'
 import {
@@ -54,10 +62,61 @@ function normalizeLevelIds(level: SnakeLevelData, levelNumber: number): SnakeLev
 
 const FIXED_BOARD_ANCHOR = 14
 
+function interiorAnchorLevel(levelNumber: number): number | null {
+  if (levelNumber >= 22 && levelNumber <= 31) return levelNumber - INTERIOR_ANCHOR_OFFSET
+  return null
+}
+
+function isCompactDistinctLevel(levelNumber: number): boolean {
+  return levelNumber >= COMPACT_DISTINCT_MIN && levelNumber <= COMPACT_DISTINCT_MAX
+}
+
+/** L2–L10：紧凑小盘 + 锚关变换生长，尽量降低中心重复 */
+function bakeCompactDistinctLevel(levelNumber: number, pack: BakedPack): SnakeLevelData {
+  const templatePath = pathTemplatePath(levelNumber)
+  const seed = levelSeed(levelNumber)
+
+  const fromL1 = levelNumber <= COMPACT_EARLY_MAX
+  const anchorIndex = fromL1 ? 0 : 3
+  const stepFrom = fromL1 ? COMPACT_EARLY_MIN : INDEPENDENT_CLUSTER_LEVEL_MIN
+  const anchor = pack.levels[anchorIndex]
+
+  if (!anchor?.snakes.length) {
+    throw new Error(`无法烘焙 L${levelNumber}（需要 L${anchorIndex + 1} 锚关）`)
+  }
+
+  const priorLevels = (
+    fromL1
+      ? pack.levels.slice(0, levelNumber - 1)
+      : pack.levels.slice(INDEPENDENT_CLUSTER_LEVEL_MIN - 1, levelNumber - 1)
+  ).filter(Boolean) as SnakeLevelData[]
+
+  process.stdout.write(fromL1 ? '[L1→紧凑] ' : '[L4→紧凑] ')
+  const generated = generateCompactDistinctFromAnchor(
+    anchor,
+    levelNumber,
+    stepFrom,
+    seed,
+    priorLevels,
+    levelNumber >= INDEPENDENT_CLUSTER_LEVEL_MIN ? 500 : 600,
+  )
+  if (!generated) {
+    throw new Error(`无法烘焙 L${levelNumber}（紧凑生成失败）`)
+  }
+
+  const normalized = normalizeLevelIds(generated, levelNumber)
+  writeFileSync(templatePath, JSON.stringify(normalized, null, 2))
+  return normalized
+}
+
 /** L1 全量生成；L2+ 在上一关基础上扩展，L31 达 160 蛇 */
 function bakePathStyleLevel(levelNumber: number, pack: BakedPack): SnakeLevelData {
   const templatePath = pathTemplatePath(levelNumber)
   const seed = levelSeed(levelNumber)
+
+  if (isCompactDistinctLevel(levelNumber)) {
+    return bakeCompactDistinctLevel(levelNumber, pack)
+  }
 
   if (levelNumber >= 2) {
     const base = pack.levels[levelNumber - 2]
@@ -90,28 +149,44 @@ function bakePathStyleLevel(levelNumber: number, pack: BakedPack): SnakeLevelDat
 
     const maxAttempts =
       levelNumber <= COMPACT_PATH_MAX_LEVEL
-        ? levelNumber >= 14
-          ? 2000
-          : 1200
+        ? interiorAnchorLevel(levelNumber)
+          ? 2500
+          : levelNumber >= 14
+            ? 2000
+            : 1200
         : levelNumber >= 22
           ? 600
           : levelNumber >= 12
             ? 350
             : 200
 
+    const interiorAnchorNum = interiorAnchorLevel(levelNumber)
+    if (interiorAnchorNum) {
+      const anchor = pack.levels[interiorAnchorNum - 1]
+      if (!anchor?.snakes.length) {
+        throw new Error(`烘焙 L${levelNumber} 需要锚关 L${interiorAnchorNum} 已存在`)
+      }
+      process.stdout.write(`[L${interiorAnchorNum}→L${levelNumber}] `)
+      const generated = generateInteriorAnchoredLevel(anchor, levelNumber)
+      if (!generated) {
+        throw new Error(`无法烘焙 L${levelNumber}（内层锚关 L${interiorAnchorNum} 扩展失败）`)
+      }
+      const normalized = normalizeLevelIds(generated, levelNumber)
+      writeFileSync(templatePath, JSON.stringify(normalized, null, 2))
+      return normalized
+    }
+
     // L16–L18 从 L14 独立生成（不同 split + 镜像），避免逐关克隆长得一样
-    const anchor = pack.levels[FIXED_BOARD_ANCHOR - 1]
-    const useAnchor =
-      levelNumber >= 16 &&
-      levelNumber <= 18 &&
-      anchor?.snakes.length
+    const legacyAnchor = pack.levels[FIXED_BOARD_ANCHOR - 1]
+    const useLegacyAnchor =
+      levelNumber >= 16 && levelNumber <= 18 && legacyAnchor?.snakes.length
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (attempt > 0 && attempt % 50 === 0) {
         process.stdout.write(`(${attempt}) `)
       }
-      const generated = useAnchor
-        ? generateFixedBoardLevelFromAnchor(anchor, levelNumber, seed + attempt * 3571)
+      const generated = useLegacyAnchor
+        ? generateFixedBoardLevelFromAnchor(legacyAnchor!, levelNumber, seed + attempt * 3571)
         : extendPathStyleLevel(base, levelNumber, toAdd, seed + attempt * 3571)
       if (generated) {
         const normalized = normalizeLevelIds(generated, levelNumber)

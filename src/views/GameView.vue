@@ -151,13 +151,23 @@ const canShareForAssist = computed(() => {
   void uiTick.value
   return controller.canShareForAssist()
 })
+const hintShareRemaining = computed(() => {
+  void uiTick.value
+  return controller.dailyShareRemaining('hint')
+})
+const assistShareRemaining = computed(() => {
+  void uiTick.value
+  return controller.dailyShareRemaining('assist')
+})
 const hintBadgeLabel = computed(() => {
   if (hintsRemaining.value > 0) return String(hintsRemaining.value)
-  return canShareForHint.value ? '+' : '0'
+  if (canShareForHint.value) return String(hintShareRemaining.value)
+  return '0'
 })
 const assistBadgeLabel = computed(() => {
   if (assistsRemaining.value > 0) return String(assistsRemaining.value)
-  return canShareForAssist.value ? '+' : '0'
+  if (canShareForAssist.value) return String(assistShareRemaining.value)
+  return '0'
 })
 const hintButtonDisabled = computed(() => {
   void uiTick.value

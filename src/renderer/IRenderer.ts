@@ -1,5 +1,5 @@
 import type { Cell, Direction, OneWayBarrier } from '@/game-core/types'
-import { isPathStyleLevel, isCompactPathLevel } from '@/game-core/snake-difficulty'
+import { isPathStyleLevel, isCompactPathLevel, usesCompactPathVisual } from '@/game-core/snake-difficulty'
 
 export interface BoardLayout {
   cellSize: number
@@ -68,7 +68,7 @@ export interface SnakeLayoutOptions {
 
 /** L1–L3 教学路径风：路径更密、棋盘居中；L4+ 标准密度 */
 export function layoutOptionsForLevel(levelNumber: number): SnakeLayoutOptions {
-  if (isCompactPathLevel(levelNumber)) {
+  if (usesCompactPathVisual(levelNumber)) {
     // L1–L3：白盘铺满顶底栏之间；路径网格缩小居中
     return {
       fill: false,

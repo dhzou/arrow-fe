@@ -1,11 +1,10 @@
 import { Sprite, Texture } from 'pixi.js'
 import {
-  drawSettingsModalVisual,
-  type SettingsModalHitRects,
-  type SettingsModalVisualState,
-} from '@/canvas-home/settings-visual-draw'
+  drawSignInModalVisual,
+  type SignInModalHitRects,
+  type SignInModalVisualState,
+} from '@/canvas-home/sign-in-visual-draw'
 import { getPlatform } from '@/platform'
-import { normalizeBoardThemeIndex } from '@/game/board-theme'
 import {
   applyWxCanvasImageBakeCapture,
   destroyWxCanvasBakeState,
@@ -18,22 +17,22 @@ import {
 import { getWxSharedOffscreenCanvas, getWxCanvas2dContext } from '@/wx/canvas'
 import { getWxThemeIndex } from '@/wx/wx-theme'
 
-/** 微信设置弹窗 — Canvas 绘制 + Image 烘焙 */
-export class WxSettingsCanvasLayer extends Sprite {
+/** 微信每日签到弹窗 — Canvas 绘制 + Image 烘焙 */
+export class WxSignInCanvasLayer extends Sprite {
   private readonly bakeState: WxCanvasBakeState = {}
   private cacheKey = ''
-  private lastHits: SettingsModalHitRects | null = null
+  private lastHits: SignInModalHitRects | null = null
   private baking: Promise<void> | null = null
   private bakeGeneration = 0
   private pending: {
     screenW: number
     screenH: number
-    state: SettingsModalVisualState
+    state: SignInModalVisualState
   } | null = null
   private lastParams: {
     screenW: number
     screenH: number
-    state: SettingsModalVisualState
+    state: SignInModalVisualState
   } | null = null
 
   onTextureReady: (() => void) | null = null
@@ -42,24 +41,22 @@ export class WxSettingsCanvasLayer extends Sprite {
     super(Texture.EMPTY)
   }
 
-  refresh(screenW: number, screenH: number, state: SettingsModalVisualState): SettingsModalHitRects | null {
+  refresh(screenW: number, screenH: number, state: SignInModalVisualState): SignInModalHitRects | null {
     if (screenW <= 0 || screenH <= 0) {
       this.visible = false
       return null
     }
     this.width = screenW
     this.height = screenH
+    this.lastParams = { screenW, screenH, state }
 
-    const boardThemeIndex = normalizeBoardThemeIndex(state.boardThemeIndex)
-    const normalizedState: SettingsModalVisualState = { ...state, boardThemeIndex }
-    this.lastParams = { screenW, screenH, state: normalizedState }
-    const key = `${screenW}|${screenH}|${normalizedState.soundEnabled}|${boardThemeIndex}|t${getWxThemeIndex()}`
+    const key = `${screenW}|${screenH}|${state.status.canClaim}|${state.status.currentDay}|${state.status.streakBroken}|${state.status.completedDays.join('')}|${state.toast ?? ''}|t${getWxThemeIndex()}`
     if (key !== this.cacheKey) {
       this.cacheKey = key
       if (this.texture !== Texture.EMPTY) {
         invalidateWxCanvasBake(this, this.bakeState)
       }
-      this.pending = { screenW, screenH, state: normalizedState }
+      this.pending = { screenW, screenH, state }
       this.visible = false
       void this.ensureBaked()
     } else {
@@ -68,7 +65,7 @@ export class WxSettingsCanvasLayer extends Sprite {
     return this.lastHits
   }
 
-  getHits(): SettingsModalHitRects | null {
+  getHits(): SignInModalHitRects | null {
     return this.lastHits
   }
 
@@ -121,7 +118,7 @@ export class WxSettingsCanvasLayer extends Sprite {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, p.screenW, p.screenH)
 
-      const { hits } = drawSettingsModalVisual(ctx, p.screenW, p.screenH, p.state)
+      const { hits } = drawSignInModalVisual(ctx, p.screenW, p.screenH, p.state)
       this.lastHits = hits
 
       return snapshotWxCanvasForImageBake(canvas, dpr, p.screenW, p.screenH)

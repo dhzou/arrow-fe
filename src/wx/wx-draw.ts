@@ -160,6 +160,15 @@ export function drawDiagGradientRect(
 export const BADGE_WARM_START = 0xffb703
 export const BADGE_WARM_END = 0xff8c00
 
+export const NUMERIC_BADGE_HEIGHT = 16
+
+/** HUD 数字角标宽度 — 对齐 Web `.tool .badge` */
+export function numericBadgeWidth(label: string): number {
+  if (label.length <= 1) return NUMERIC_BADGE_HEIGHT
+  if (label.length <= 2) return 20
+  return Math.min(36, 12 + label.length * 6)
+}
+
 /** 数字角标胶囊（对齐 Web .tool .badge — 90deg 渐变 + surfaceStrong 描边） */
 export function drawGradientBadge(
   g: Graphics,
@@ -175,9 +184,9 @@ export function drawGradientBadge(
   const r = h / 2
   const cy = y + h / 2
 
-  // 小圆角胶囊不能用「按列 roundRect(r=全高)」— 16px 宽时 slice 比 r 窄，fill 在真机常丢失
+  // 小圆角胶囊：多 rect 条带 fill 在 iOS 真机常丢失；改单圆/双圆 + 中段条带
   if (w <= h + 0.5) {
-    drawHGradientRectFlat(g, x, y, w, h, c1, c2)
+    g.circle(x + w / 2, cy, r).fill({ color: c1 })
   } else {
     g.circle(x + r, cy, r).fill({ color: c1 })
     g.circle(x + w - r, cy, r).fill({ color: c2 })

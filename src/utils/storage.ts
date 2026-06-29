@@ -8,6 +8,10 @@ import {
 } from '@/game/board-theme'
 import { dailySeed, todayDateString } from '@/game-core/random'
 import { defaultDailySignInState, normalizeDailySignInState } from '@/game/daily-sign-in'
+import {
+  defaultDailyShareRewardState,
+  normalizeDailyShareRewardState,
+} from '@/game/daily-share-reward'
 import { INITIAL_ASSISTS, INITIAL_HINTS } from '@/game/game-ui-content'
 import { getPlatform } from '@/platform'
 
@@ -40,6 +44,7 @@ export function defaultSaveData(): SaveData {
     completedLevels: [],
     dailyChallenge: defaultDailyChallenge(),
     dailySignIn: defaultDailySignInState(),
+    dailyShareReward: defaultDailyShareRewardState(),
     settings: {
       soundEnabled: true,
       boardThemeIndex: DEFAULT_BOARD_THEME_INDEX,
@@ -103,6 +108,7 @@ export function loadSaveData(): SaveData {
       completedLevels: parsed.completedLevels ?? defaults.completedLevels,
       dailyChallenge: normalizeDailyChallenge(parsed.dailyChallenge),
       dailySignIn: normalizeDailySignInState(parsed.dailySignIn),
+      dailyShareReward: normalizeDailyShareRewardState(parsed.dailyShareReward),
       settings: normalizeSettings(parsed.settings, defaults.settings),
       tutorialDone: parsed.tutorialDone ?? defaults.tutorialDone,
       winStreak: parsed.winStreak ?? defaults.winStreak,
